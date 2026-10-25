@@ -1,55 +1,133 @@
-
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-const batteries = [
-  {
-    id: "BAT001",
-    laptop: "Dell Inspiron 15",
-    type: "Lithium-ion",
-    capacity: 42000,
-    initial: 50000,
-    cycles: 385,
-    temperature: 34,
-    status: "Healthy",
-  },
-  {
-    id: "BAT002",
-    laptop: "HP Pavilion",
-    type: "Lithium-ion",
-    capacity: 31000,
-    initial: 50000,
-    cycles: 612,
-    temperature: 41,
-    status: "Warning",
-  },
-  {
-    id: "BAT003",
-    laptop: "Lenovo IdeaPad",
-    type: "Lithium-polymer",
-    capacity: 18000,
-    initial: 48000,
-    cycles: 890,
-    temperature: 46,
-    status: "Critical",
-  },
-  {
-    id: "BAT004",
-    laptop: "ASUS VivoBook",
-    type: "Lithium-ion",
-    capacity: 45500,
-    initial: 50000,
-    cycles: 210,
-    temperature: 31,
-    status: "Healthy",
-  },
-];
+type BatteryApiRecord = {
+  battery_id: number;
+  laptop_id: number;
+  type_id: number;
+  initial_capacity: number | string;
+  current_capacity: number | string;
+  health_percentage?: number | string;
+};
+
+type LaptopApiRecord = {
+  laptop_id: number;
+  brand: string;
+  model: string;
+};
+
+type DiagnosticReport = {
+  id: string;
+  battery_id: number;
+  diagnosis: string;
+  risk_level: string;
+  analysis_date?: string;
+  brand?: string | null;
+  model?: string | null;
+};
+
+type Battery = {
+  id: string;
+  laptop: string;
+  type: string;
+  capacity: number;
+  initial: number;
+  cycles: number | null;
+  temperature: number | null;
+};
 
 export default function Home() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
   const [activePage, setActivePage] = useState("Dashboard");
+  const [batteries, setBatteries] = useState<Battery[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [diagnosticReports, setDiagnosticReports] = useState<DiagnosticReport[]>([]);
+  useEffect(() => {
+  async function fetchDiagnosticReports() {
+    try {
+      const response = await fetch("/api/diagnostic-reports", {
+        cache: "no-store",
+      });
+
+      const result = await response.json();
+
+      if (result.success && Array.isArray(result.data)) {
+        setDiagnosticReports(result.data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch diagnostic reports:", error);
+    }
+  }
+
+  fetchDiagnosticReports();
+}, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBatteryData() {
+      try {
+        setLoading(true);
+        setLoadError("");
+
+        const [batteryResponse, laptopResponse] = await Promise.all([
+          fetch("/api/batteries", { cache: "no-store" }),
+          fetch("/api/laptops", { cache: "no-store" }),
+        ]);
+
+        const batteryPayload = await batteryResponse.json();
+        const laptopPayload = await laptopResponse.json();
+
+        if (!batteryResponse.ok || !batteryPayload.success) {
+          throw new Error(batteryPayload.error || "Unable to load battery records.");
+        }
+        if (!laptopResponse.ok || !laptopPayload.success) {
+          throw new Error(laptopPayload.error || "Unable to load laptop records.");
+        }
+
+        const batteryRows: BatteryApiRecord[] = batteryPayload.data ?? [];
+        const laptopRows: LaptopApiRecord[] = laptopPayload.data ?? [];
+        const laptopsById = new Map(
+          laptopRows.map((laptop) => [
+            Number(laptop.laptop_id),
+            `${laptop.brand} ${laptop.model}`,
+          ])
+        );
+
+        const mappedBatteries: Battery[] = batteryRows.map((row) => ({
+          id: `BAT${String(row.battery_id).padStart(3, "0")}`,
+          laptop:
+            laptopsById.get(Number(row.laptop_id)) ??
+            `Laptop ${row.laptop_id}`,
+          type: Number(row.type_id) === 2 ? "Lithium-polymer" : "Lithium-ion",
+          capacity: Number(row.current_capacity),
+          initial: Number(row.initial_capacity),
+          // Cycle counts and temperatures are not returned by the current API.
+          cycles: null,
+          temperature: null,
+        }));
+
+        if (!cancelled) {
+          setBatteries(mappedBatteries);
+        }
+      } catch (error) {
+        console.error("Dashboard data error:", error);
+        if (!cancelled) {
+          setLoadError("Could not load database records. Check the batteries and laptops APIs.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadBatteryData();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filteredBatteries = batteries.filter((battery) => {
     const matchesSearch =
@@ -71,7 +149,7 @@ export default function Home() {
       (sum, battery) =>
         sum + (battery.capacity / battery.initial) * 100,
       0
-    ) / batteries.length;
+    ) / (batteries.length || 1);
 
   const attentionCount = batteries.filter(
     (battery) => battery.capacity / battery.initial < 0.8
@@ -93,28 +171,30 @@ export default function Home() {
         </div>
 
         <nav className="flex-1 space-y-2 px-4 py-6">
-          {[
-            ["Dashboard", "▦", "/"],
-            ["Laptops", "▣", "/laptops"],
-            ["Battery Health", "◉", "/battery-health"],
-            ["Charging Sessions", "ϟ", "/charging-sessions"],
-            ["Maintenance", "⚒", "/maintenance"],
-            ["Failure Records", "⚠", "/failure-records"],
-          ].map(([name, icon, path]) => (
-            <a
-              key={name}
-              href={path}
-              className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition ${
-                name === "Dashboard"
-                  ? "bg-emerald-400 font-semibold text-slate-950"
-                  : "text-slate-300 hover:bg-white/10"
-              }`}
-            >
-              <span>{icon}</span>
-              {name}
-            </a>
-          ))}
-        </nav>
+  {[
+    ["Dashboard", "▦", "/"],
+    ["Laptops", "▣", "/laptops"],
+    ["Battery Health", "◉", "/battery-health"],
+    ["Charging Sessions", "ϟ", "/charging-sessions"],
+    ["Maintenance", "⚒", "/maintenance"],
+    ["Failure Records", "⚠", "/failure-records"],
+    ["Diagnostic Reports", "▤", "/diagnostic-reports"],
+  ].map(([name, icon, path]) => (
+    <a
+      key={name}
+      href={path}
+      className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition ${
+        name === "Dashboard"
+          ? "bg-emerald-400 font-semibold text-slate-950"
+          : "text-slate-300 hover:bg-white/10"
+      }`}
+    >
+      <span>{icon}</span>
+      {name}
+    </a>
+  ))}
+</nav>
+
 
         <div className="m-4 rounded-xl border border-white/10 p-4">
           <p className="text-sm font-semibold">BatteryWatch</p>
@@ -156,26 +236,20 @@ export default function Home() {
               Track capacity, inspect charging patterns, and identify
               batteries that may need attention.
             </p>
-            <button
-              onClick={() => setActivePage("Battery Health")}
-              className="mt-6 rounded-lg bg-emerald-400 px-5 py-3 text-sm font-bold text-slate-950 hover:bg-emerald-300"
-            >
-              Explore battery health →
-            </button>
           </section>
 
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {[
               {
                 label: "Registered laptops",
-                value: "04",
-                note: "Demo records",
+                value: String(new Set(batteries.map((battery) => battery.laptop)).size).padStart(2, "0"),
+                note: "From MySQL",
                 icon: "▣",
               },
               {
                 label: "Average battery health",
                 value: `${averageHealth.toFixed(1)}%`,
-                note: "Across demo batteries",
+                note: "From MySQL battery records",
                 icon: "◉",
               },
               {
@@ -186,8 +260,14 @@ export default function Home() {
               },
               {
                 label: "Highest temperature",
-                value: `${Math.max(...batteries.map((b) => b.temperature))}°C`,
-                note: "Among demo records",
+                value: batteries.some((battery) => battery.temperature !== null)
+                  ? `${Math.max(
+                      ...batteries
+                        .map((battery) => battery.temperature)
+                        .filter((temperature): temperature is number => temperature !== null)
+                    )}°C`
+                  : "N/A",
+                note: "Temperature data unavailable",
                 icon: "♨",
               },
             ].map((item) => (
@@ -215,9 +295,7 @@ export default function Home() {
                   Inspect battery capacity and current condition.
                 </p>
               </div>
-              <span className="rounded-full bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-                Sample data only
-              </span>
+
             </div>
 
             <div className="mt-6 flex flex-col gap-3 sm:flex-row">
@@ -238,6 +316,17 @@ export default function Home() {
                 <option>Critical</option>
               </select>
             </div>
+
+            {loading && (
+              <p className="mt-5 py-4 text-center text-sm text-slate-500">
+                Loading battery records from MySQL...
+              </p>
+            )}
+            {loadError && (
+              <p className="mt-5 py-4 text-center text-sm text-red-600">
+                {loadError}
+              </p>
+            )}
 
             <div className="mt-5 overflow-x-auto">
               <table className="w-full min-w-[700px] text-left text-sm">
@@ -291,8 +380,10 @@ export default function Home() {
                           {(battery.capacity / 1000).toFixed(1)} /{" "}
                           {(battery.initial / 1000).toFixed(1)} Wh
                         </td>
-                        <td className="px-3 py-5">{battery.cycles}</td>
-                        <td className="px-3 py-5">{battery.temperature}°C</td>
+                        <td className="px-3 py-5">{battery.cycles ?? "—"}</td>
+                        <td className="px-3 py-5">
+                          {battery.temperature === null ? "—" : `${battery.temperature}°C`}
+                        </td>
                         <td className="px-3 py-5">
                           <span
                             className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
@@ -311,17 +402,14 @@ export default function Home() {
                   })}
                 </tbody>
               </table>
-              {filteredBatteries.length === 0 && (
+              {!loading && !loadError && filteredBatteries.length === 0 && (
                 <p className="py-10 text-center text-sm text-slate-500">
                   No batteries match your search.
                 </p>
               )}
             </div>
-            <p className="mt-4 text-xs text-slate-400">
-              Illustrative records for UI development. Not connected to the
-              project database yet.
-            </p>
           </section>
+
 
           <footer className="pb-4 text-center text-xs text-slate-400">
             BatteryWatch · Laptop Battery Health &amp; Degradation Analysis

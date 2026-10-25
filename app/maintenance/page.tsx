@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type Maintenance = {
   id: string;
@@ -16,47 +16,10 @@ type Maintenance = {
   status: "Completed" | "Pending";
 };
 
-const initialRecords: Maintenance[] = [
-  {
-    id: "MNT001",
-    battery: "BAT001",
-    laptop: "Dell Inspiron 15",
-    date: "2026-08-12",
-    issue: "Battery draining quickly",
-    action: "Battery diagnostics and calibration",
-    cost: 1200,
-    centre: "Dell Service Centre",
-    location: "Bengaluru",
-    status: "Completed",
-  },
-  {
-    id: "MNT002",
-    battery: "BAT002",
-    laptop: "HP Pavilion 14",
-    date: "2026-09-04",
-    issue: "Overheating during charging",
-    action: "Cooling system inspection",
-    cost: 1800,
-    centre: "HP Service Centre",
-    location: "Bengaluru",
-    status: "Completed",
-  },
-  {
-    id: "MNT003",
-    battery: "BAT003",
-    laptop: "Lenovo IdeaPad Slim 5",
-    date: "2026-10-20",
-    issue: "Rapid capacity degradation",
-    action: "Battery replacement recommended",
-    cost: 0,
-    centre: "Lenovo Service Centre",
-    location: "Bengaluru",
-    status: "Pending",
-  },
-];
-
 export default function MaintenancePage() {
-  const [records, setRecords] = useState<Maintenance[]>(initialRecords);
+  const [records, setRecords] = useState<Maintenance[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
   const [showForm, setShowForm] = useState(false);
@@ -70,6 +33,55 @@ export default function MaintenancePage() {
   const [centre, setCentre] = useState("");
   const [location, setLocation] = useState("");
   const [status, setStatus] = useState<"Completed" | "Pending">("Pending");
+
+  useEffect(() => {
+    async function fetchMaintenanceRecords() {
+      try {
+        const response = await fetch("/api/maintenance", {
+          cache: "no-store",
+        });
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+          throw new Error(result.error || "Failed to load maintenance records");
+        }
+
+        const mappedRecords: Maintenance[] = result.data.map((row: {
+          maintenance_id: number;
+          battery_id: number;
+          brand: string;
+          model: string;
+          service_date: string;
+          issue_description: string | null;
+          action_taken: string | null;
+          cost: number | string | null;
+          service_center: string | null;
+          location_id: number;
+        }) => ({
+          id: `MNT${String(row.maintenance_id).padStart(3, "0")}`,
+          battery: `BAT${String(row.battery_id).padStart(3, "0")}`,
+          laptop: `${row.brand} ${row.model}`,
+          date: String(row.service_date).slice(0, 10),
+          issue: row.issue_description || "Not specified",
+          action: row.action_taken || "Not specified",
+          cost: Number(row.cost ?? 0),
+          centre: row.service_center || "Not specified",
+          location: `Location ID ${row.location_id}`,
+          status: row.action_taken?.trim() ? "Completed" : "Pending",
+        }));
+
+        setRecords(mappedRecords);
+      } catch (error) {
+        console.error("Failed to fetch maintenance records:", error);
+        setLoadError("Unable to load maintenance records from MySQL.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchMaintenanceRecords();
+  }, []);
+
 
   const filtered = records.filter((record) => {
     const matchesSearch =
@@ -291,13 +303,25 @@ export default function MaintenancePage() {
             </tbody>
           </table>
 
-          {filtered.length === 0 && (
+          {loading && (
+            <p className="py-8 text-center text-sm text-slate-500">
+              Loading maintenance records from MySQL...
+            </p>
+          )}
+
+          {loadError && (
+            <p className="py-8 text-center text-sm text-red-600">
+              {loadError}
+            </p>
+          )}
+
+          {!loading && !loadError && filtered.length === 0 && (
             <p className="py-8 text-center text-sm text-slate-500">No matching records.</p>
           )}
         </div>
 
         <p className="mt-4 text-xs text-slate-400">
-          Illustrative demo data only; records are not yet saved to MySQL.
+          Maintenance records are loaded from MySQL. Adding new records is not yet saved to MySQL.
         </p>
       </section>
     </main>

@@ -51,3 +51,8 @@ next-env.d.ts
 
 # Vercel
 .vercel/
+node_modules/
+.next/
+.env
+.env.*
+!.env.example

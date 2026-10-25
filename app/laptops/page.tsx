@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type Laptop = {
   id: string;
@@ -48,13 +48,56 @@ const initialLaptops: Laptop[] = [
 ];
 
 export default function LaptopsPage() {
-  const [laptops, setLaptops] = useState<Laptop[]>(initialLaptops);
+  const [laptops, setLaptops] = useState<Laptop[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [brand, setBrand] = useState("Dell");
   const [model, setModel] = useState("");
   const [os, setOs] = useState("Windows 11");
   const [purchaseDate, setPurchaseDate] = useState("");
+  useEffect(() => {
+  async function fetchLaptops() {
+    try {
+      const response = await fetch("/api/laptops", {
+        cache: "no-store",
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Failed to load laptops");
+      }
+
+      const mappedLaptops: Laptop[] = result.data.map((row: {
+        laptop_id: number;
+        brand: string;
+        model: string;
+        os: string;
+        purchase_date: string | null;
+      }) => ({
+        id: `LAP${String(row.laptop_id).padStart(3, "0")}`,
+        brand: row.brand,
+        model: row.model,
+        os: row.os,
+        purchaseDate: row.purchase_date
+          ? String(row.purchase_date).slice(0, 10)
+          : "",
+        battery: "Not assigned",
+      }));
+
+      setLaptops(mappedLaptops);
+    } catch (error) {
+      console.error("Failed to fetch laptops:", error);
+      setLoadError("Unable to load laptops from MySQL.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  fetchLaptops();
+}, []);
 
   const filteredLaptops = laptops.filter((laptop) =>
     `${laptop.id} ${laptop.brand} ${laptop.model}`

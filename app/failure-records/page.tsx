@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type Failure = {
   id: string;
@@ -14,41 +14,10 @@ type Failure = {
   resolvedDate: string;
 };
 
-const initialFailures: Failure[] = [
-  {
-    id: "FLR001",
-    battery: "BAT002",
-    laptop: "HP Pavilion 14",
-    date: "2026-07-14",
-    symptoms: "Battery drains unusually fast",
-    cause: "Capacity degradation",
-    severity: "Medium",
-    resolvedDate: "2026-07-16",
-  },
-  {
-    id: "FLR002",
-    battery: "BAT003",
-    laptop: "Lenovo IdeaPad Slim 5",
-    date: "2026-09-22",
-    symptoms: "Unexpected shutdown at 30%",
-    cause: "Reduced usable capacity",
-    severity: "High",
-    resolvedDate: "",
-  },
-  {
-    id: "FLR003",
-    battery: "BAT001",
-    laptop: "Dell Inspiron 15",
-    date: "2026-10-05",
-    symptoms: "Battery temperature unusually high",
-    cause: "Charging-related overheating",
-    severity: "Critical",
-    resolvedDate: "2026-10-06",
-  },
-];
-
 export default function FailureRecordsPage() {
-  const [failures, setFailures] = useState<Failure[]>(initialFailures);
+  const [failures, setFailures] = useState<Failure[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
   const [severityFilter, setSeverityFilter] = useState("All");
   const [resolutionFilter, setResolutionFilter] = useState("All");
@@ -60,6 +29,62 @@ export default function FailureRecordsPage() {
   const [symptoms, setSymptoms] = useState("");
   const [cause, setCause] = useState("");
   const [severity, setSeverity] = useState<Failure["severity"]>("Medium");
+
+  useEffect(() => {
+    async function fetchFailures() {
+      try {
+        const response = await fetch("/api/failure-records", {
+          cache: "no-store",
+        });
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+          throw new Error(result.error || "Failed to load failure records");
+        }
+
+        const mappedFailures: Failure[] = result.data.map((row: {
+          failure_id: number;
+          battery_id: number;
+          brand: string;
+          model: string;
+          failure_date: string;
+          symptoms: string;
+          cause: string | null;
+          severity: string | null;
+          resolved_date: string | null;
+        }) => {
+          const rawSeverity = (row.severity || "Medium").toLowerCase();
+          const normalizedSeverity =
+            rawSeverity === "low" ? "Low" :
+            rawSeverity === "high" ? "High" :
+            rawSeverity === "critical" ? "Critical" : "Medium";
+
+          return {
+            id: `FLR${String(row.failure_id).padStart(3, "0")}`,
+            battery: `BAT${String(row.battery_id).padStart(3, "0")}`,
+            laptop: `${row.brand} ${row.model}`,
+            date: String(row.failure_date).slice(0, 10),
+            symptoms: row.symptoms || "",
+            cause: row.cause || "Not specified",
+            severity: normalizedSeverity as Failure["severity"],
+            resolvedDate: row.resolved_date
+              ? String(row.resolved_date).slice(0, 10)
+              : "",
+          };
+        });
+
+        setFailures(mappedFailures);
+      } catch (error) {
+        console.error("Failed to fetch failure records:", error);
+        setLoadError("Unable to load failure records from MySQL.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchFailures();
+  }, []);
+
 
   const filtered = failures.filter((failure) => {
     const text =
@@ -312,7 +337,19 @@ export default function FailureRecordsPage() {
             </tbody>
           </table>
 
-          {filtered.length === 0 && (
+          {loading && (
+            <p className="py-8 text-center text-sm text-slate-500">
+              Loading failure records from MySQL...
+            </p>
+          )}
+
+          {loadError && (
+            <p className="py-8 text-center text-sm text-red-600">
+              {loadError}
+            </p>
+          )}
+
+          {!loading && !loadError && filtered.length === 0 && (
             <p className="py-8 text-center text-sm text-slate-500">
               No matching failure records.
             </p>
@@ -320,7 +357,7 @@ export default function FailureRecordsPage() {
         </div>
 
         <p className="mt-4 text-xs text-slate-400">
-          Illustrative demo data only; records are not yet saved to MySQL.
+          Failure records are loaded from MySQL. Adding or resolving records is not yet saved to MySQL.
         </p>
       </section>
     </main>

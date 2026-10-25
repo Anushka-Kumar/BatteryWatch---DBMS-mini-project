@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type Session = {
   id: string;
@@ -15,55 +15,10 @@ type Session = {
   cycles: number;
 };
 
-const initialSessions: Session[] = [
-  {
-    id: "CHG001",
-    laptop: "Dell Inspiron 15",
-    battery: "BAT001",
-    start: "2026-10-25T08:00",
-    end: "2026-10-25T09:25",
-    startPercent: 20,
-    endPercent: 95,
-    temperature: 34,
-    cycles: 385,
-  },
-  {
-    id: "CHG002",
-    laptop: "HP Pavilion 14",
-    battery: "BAT002",
-    start: "2026-10-24T10:15",
-    end: "2026-10-24T11:50",
-    startPercent: 15,
-    endPercent: 85,
-    temperature: 41,
-    cycles: 612,
-  },
-  {
-    id: "CHG003",
-    laptop: "Lenovo IdeaPad Slim 5",
-    battery: "BAT003",
-    start: "2026-10-23T14:00",
-    end: "2026-10-23T15:40",
-    startPercent: 10,
-    endPercent: 78,
-    temperature: 46,
-    cycles: 890,
-  },
-  {
-    id: "CHG004",
-    laptop: "ASUS VivoBook 15",
-    battery: "BAT004",
-    start: "2026-10-22T09:30",
-    end: "2026-10-22T10:35",
-    startPercent: 35,
-    endPercent: 90,
-    temperature: 31,
-    cycles: 210,
-  },
-];
-
 export default function ChargingSessionsPage() {
-  const [sessions, setSessions] = useState<Session[]>(initialSessions);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
 
@@ -74,6 +29,56 @@ export default function ChargingSessionsPage() {
   const [startPercent, setStartPercent] = useState("20");
   const [endPercent, setEndPercent] = useState("80");
   const [temperature, setTemperature] = useState("35");
+
+  useEffect(() => {
+    async function fetchSessions() {
+      try {
+        const response = await fetch("/api/charging-sessions", {
+          cache: "no-store",
+        });
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+          throw new Error(result.error || "Failed to load charging sessions");
+        }
+
+        const mappedSessions: Session[] = result.data.map((row: {
+          session_id: number;
+          battery_id: number;
+          brand: string;
+          model: string;
+          start_time: string;
+          end_time: string | null;
+          start_percentage: number | string;
+          end_percentage: number | string;
+          temperature: number | string | null;
+          charge_cycles: number | null;
+        }) => ({
+          id: `CHG${String(row.session_id).padStart(3, "0")}`,
+          laptop: `${row.brand} ${row.model}`,
+          battery: `BAT${String(row.battery_id).padStart(3, "0")}`,
+          start: String(row.start_time).replace("Z", "").slice(0, 16),
+          end: row.end_time
+            ? String(row.end_time).replace("Z", "").slice(0, 16)
+            : "In progress",
+          startPercent: Number(row.start_percentage),
+          endPercent: Number(row.end_percentage),
+          temperature: row.temperature == null ? 0 : Number(row.temperature),
+          cycles: Number(row.charge_cycles ?? 0),
+        }));
+
+        setSessions(mappedSessions);
+      } catch (error) {
+        console.error("Failed to fetch charging sessions:", error);
+        setLoadError("Unable to load charging sessions from MySQL.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchSessions();
+  }, []);
+
 
   const filtered = sessions.filter((session) =>
     `${session.id} ${session.laptop} ${session.battery}`
@@ -166,7 +171,7 @@ export default function ChargingSessionsPage() {
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
           <p className="text-sm text-slate-500">Highest temperature</p>
           <p className="mt-3 text-3xl font-bold">
-            {Math.max(...sessions.map((session) => session.temperature))}°C
+            {sessions.length > 0 ? `${Math.max(...sessions.map((session) => session.temperature))}°C` : "N/A"}
           </p>
         </div>
       </section>
@@ -322,7 +327,19 @@ export default function ChargingSessionsPage() {
             </tbody>
           </table>
 
-          {filtered.length === 0 && (
+          {loading && (
+            <p className="py-8 text-center text-sm text-slate-500">
+              Loading charging sessions from MySQL...
+            </p>
+          )}
+
+          {loadError && (
+            <p className="py-8 text-center text-sm text-red-600">
+              {loadError}
+            </p>
+          )}
+
+          {!loading && !loadError && filtered.length === 0 && (
             <p className="py-8 text-center text-sm text-slate-500">
               No matching charging sessions.
             </p>
@@ -330,7 +347,7 @@ export default function ChargingSessionsPage() {
         </div>
 
         <p className="mt-4 text-xs text-slate-400">
-          Demo records only. New sessions are temporary and are not yet saved to MySQL.
+          Charging sessions are loaded from MySQL. New sessions are not yet saved to MySQL.
         </p>
       </section>
     </main>
