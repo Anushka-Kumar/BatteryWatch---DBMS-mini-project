@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -12,92 +11,69 @@ type Laptop = {
   battery: string;
 };
 
-const initialLaptops: Laptop[] = [
-  {
-    id: "LAP001",
-    brand: "Dell",
-    model: "Inspiron 15",
-    os: "Windows 11",
-    purchaseDate: "2024-06-12",
-    battery: "BAT001",
-  },
-  {
-    id: "LAP002",
-    brand: "HP",
-    model: "Pavilion 14",
-    os: "Windows 11",
-    purchaseDate: "2023-09-20",
-    battery: "BAT002",
-  },
-  {
-    id: "LAP003",
-    brand: "Lenovo",
-    model: "IdeaPad Slim 5",
-    os: "Windows 11",
-    purchaseDate: "2022-03-15",
-    battery: "BAT003",
-  },
-  {
-    id: "LAP004",
-    brand: "ASUS",
-    model: "VivoBook 15",
-    os: "Windows 11",
-    purchaseDate: "2025-01-08",
-    battery: "BAT004",
-  },
-];
-
 export default function LaptopsPage() {
   const [laptops, setLaptops] = useState<Laptop[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [brand, setBrand] = useState("Dell");
   const [model, setModel] = useState("");
   const [os, setOs] = useState("Windows 11");
   const [purchaseDate, setPurchaseDate] = useState("");
-  useEffect(() => {
+  const [serialNo, setSerialNo] = useState("");
+  const [userId, setUserId] = useState("");
+
   async function fetchLaptops() {
     try {
+      setLoadError("");
+
       const response = await fetch("/api/laptops", {
         cache: "no-store",
       });
-
       const result = await response.json();
 
       if (!response.ok || !result.success) {
-        throw new Error(result.error || "Failed to load laptops");
+        throw new Error(result.error || "Failed to load laptops.");
       }
 
-      const mappedLaptops: Laptop[] = result.data.map((row: {
-        laptop_id: number;
-        brand: string;
-        model: string;
-        os: string;
-        purchase_date: string | null;
-      }) => ({
-        id: `LAP${String(row.laptop_id).padStart(3, "0")}`,
-        brand: row.brand,
-        model: row.model,
-        os: row.os,
-        purchaseDate: row.purchase_date
-          ? String(row.purchase_date).slice(0, 10)
-          : "",
-        battery: "Not assigned",
-      }));
+      const mappedLaptops: Laptop[] = result.data.map(
+        (row: {
+          laptop_id: number;
+          brand: string;
+          model: string;
+          os: string;
+          purchase_date: string | null;
+        }) => ({
+          id: `LAP${String(row.laptop_id).padStart(3, "0")}`,
+          brand: row.brand,
+          model: row.model,
+          os: row.os,
+          purchaseDate: row.purchase_date
+            ? String(row.purchase_date).slice(0, 10)
+            : "—",
+          battery: "Not assigned",
+        })
+      );
 
       setLaptops(mappedLaptops);
     } catch (error) {
       console.error("Failed to fetch laptops:", error);
-      setLoadError("Unable to load laptops from MySQL.");
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load laptops from MySQL."
+      );
     } finally {
       setLoading(false);
     }
   }
 
-  fetchLaptops();
-}, []);
+  useEffect(() => {
+    fetchLaptops();
+  }, []);
 
   const filteredLaptops = laptops.filter((laptop) =>
     `${laptop.id} ${laptop.brand} ${laptop.model}`
@@ -105,22 +81,47 @@ export default function LaptopsPage() {
       .includes(search.toLowerCase())
   );
 
-  function addLaptop(event: React.FormEvent<HTMLFormElement>) {
+  async function addLaptop(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setMessage("");
+    setSaving(true);
 
-    const newLaptop: Laptop = {
-      id: `LAP${String(Date.now()).slice(-6)}`,
-      brand,
-      model: model.trim(),
-      os,
-      purchaseDate,
-      battery: "Not assigned",
-    };
+    try {
+      const response = await fetch("/api/laptops", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: Number(userId),
+          brand,
+          model: model.trim(),
+          os,
+          purchase_date: purchaseDate,
+          serial_no: serialNo.trim() || null,
+        }),
+      });
 
-    setLaptops((current) => [...current, newLaptop]);
-    setModel("");
-    setPurchaseDate("");
-    setShowForm(false);
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Unable to save laptop.");
+      }
+
+      setMessage("Laptop saved successfully to MySQL!");
+      setModel("");
+      setPurchaseDate("");
+      setSerialNo("");
+      setUserId("");
+      setShowForm(false);
+
+      await fetchLaptops();
+    } catch (error) {
+      console.error("Save laptop error:", error);
+      setMessage(
+        error instanceof Error ? error.message : "Unable to save laptop."
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -144,12 +145,27 @@ export default function LaptopsPage() {
         </div>
 
         <button
-          onClick={() => setShowForm(!showForm)}
+          onClick={() => {
+            setMessage("");
+            setShowForm(!showForm);
+          }}
           className="rounded-lg bg-emerald-500 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-emerald-400"
         >
           {showForm ? "Cancel" : "+ Add Laptop"}
         </button>
       </header>
+
+      {message && (
+        <div className="mt-5 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+          {message}
+        </div>
+      )}
+
+      {loadError && (
+        <div className="mt-5 rounded-lg bg-red-50 p-4 text-sm text-red-700">
+          {loadError}
+        </div>
+      )}
 
       {showForm && (
         <form
@@ -159,6 +175,22 @@ export default function LaptopsPage() {
           <h2 className="text-lg font-bold sm:col-span-2">
             Register a laptop
           </h2>
+
+          <label className="text-sm font-medium">
+            User ID
+            <input
+              required
+              type="number"
+              min="1"
+              value={userId}
+              onChange={(event) => setUserId(event.target.value)}
+              placeholder="Enter an existing MySQL user ID"
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            />
+            <span className="mt-1 block text-xs text-slate-500">
+              Use an existing user_id from your users table.
+            </span>
+          </label>
 
           <label className="text-sm font-medium">
             Brand
@@ -214,11 +246,22 @@ export default function LaptopsPage() {
             />
           </label>
 
+          <label className="text-sm font-medium sm:col-span-2">
+            Serial number (optional)
+            <input
+              value={serialNo}
+              onChange={(event) => setSerialNo(event.target.value)}
+              placeholder="Enter the laptop serial number"
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            />
+          </label>
+
           <button
             type="submit"
-            className="rounded-lg bg-[#14243a] px-5 py-3 font-semibold text-white hover:bg-slate-700 sm:col-span-2"
+            disabled={saving}
+            className="rounded-lg bg-[#14243a] px-5 py-3 font-semibold text-white hover:bg-slate-700 disabled:opacity-60 sm:col-span-2"
           >
-            Save Laptop
+            {saving ? "Saving..." : "Save Laptop"}
           </button>
         </form>
       )}
@@ -287,7 +330,13 @@ export default function LaptopsPage() {
             </tbody>
           </table>
 
-          {filteredLaptops.length === 0 && (
+          {loading && (
+            <p className="py-8 text-center text-sm text-slate-500">
+              Loading laptops from MySQL...
+            </p>
+          )}
+
+          {!loading && filteredLaptops.length === 0 && (
             <p className="py-8 text-center text-sm text-slate-500">
               No laptops match your search.
             </p>
@@ -295,7 +344,8 @@ export default function LaptopsPage() {
         </div>
 
         <p className="mt-4 text-xs text-slate-400">
-          Prototype only: changes are temporary and are not yet saved to MySQL.
+          Laptop records are loaded from MySQL. New laptops are saved through
+          the backend API.
         </p>
       </section>
     </main>
