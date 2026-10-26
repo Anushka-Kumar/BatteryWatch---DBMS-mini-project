@@ -6,7 +6,7 @@ BatteryWatch is a DBMS mini project designed to track laptop battery health, cha
 
 - **Frontend:** Next.js, React, TypeScript
 - **Database:** MySQL
-- **Backend:** To be integrated
+- **Backend:** Next.js API Routes (server-side API layer)
 
 ## Features
 
