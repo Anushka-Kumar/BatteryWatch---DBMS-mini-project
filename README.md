@@ -59,6 +59,3 @@ Open [http://localhost:3000](http://localhost:3000).
 
 The frontend currently uses sample data in places; database integration is a work in progress.
 
-## Project Status
-
-The frontend pages and MySQL schema have been developed separately. Backend integration and end-to-end testing are the next steps.
