@@ -97,29 +97,108 @@ export default function MaintenancePage() {
     (record) => record.status === "Pending"
   ).length;
 
-  function addRecord(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+async function addRecord(event: React.FormEvent<HTMLFormElement>) {
+  event.preventDefault();
 
-    const amount = Number(cost);
-    if (!Number.isFinite(amount) || amount < 0) {
-      alert("Enter a valid non-negative service cost.");
-      return;
+  const amount = Number(cost);
+  const batteryId = Number(battery.replace("BAT", ""));
+
+  if (!Number.isFinite(amount) || amount < 0) {
+    alert("Enter a valid non-negative service cost.");
+    return;
+  }
+
+  if (!date || !issue.trim() || !action.trim() || !centre.trim() || !location.trim()) {
+    alert("Please fill in all maintenance fields.");
+    return;
+  }
+
+  try {
+    // Find the existing location ID using the maintenance form's location.
+    const locationResponse = await fetch("/api/locations", {
+      cache: "no-store",
+    });
+
+    if (!locationResponse.ok) {
+      throw new Error("Unable to retrieve locations.");
     }
 
-    const newRecord: Maintenance = {
-      id: `MNT${String(Date.now()).slice(-6)}`,
-      battery,
-      laptop,
-      date,
-      issue: issue.trim(),
-      action: action.trim(),
-      cost: amount,
-      centre: centre.trim(),
-      location: location.trim(),
-      status,
-    };
+    const locationResult = await locationResponse.json();
 
-    setRecords((current) => [newRecord, ...current]);
+    if (!locationResult.success || !Array.isArray(locationResult.data)) {
+      throw new Error("The locations API did not return valid data.");
+    }
+
+    const matchingLocation = locationResult.data.find(
+      (item: { location_id: number; name: string }) =>
+        item.name.trim().toLowerCase() === location.trim().toLowerCase()
+    );
+
+    if (!matchingLocation) {
+      throw new Error(
+        "Location not found in the database. Select or enter an existing location."
+      );
+    }
+
+    const response = await fetch("/api/maintenance", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        battery_id: batteryId,
+        service_date: date,
+        issue_description: issue.trim(),
+        action_taken: action.trim(),
+        cost: amount,
+        service_center: centre.trim(),
+        location_id: matchingLocation.location_id,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.error || "Failed to save maintenance record.");
+    }
+
+    const refreshResponse = await fetch("/api/maintenance", {
+      cache: "no-store",
+    });
+
+    const refreshResult = await refreshResponse.json();
+
+    if (!refreshResponse.ok || !refreshResult.success) {
+      throw new Error("Saved, but failed to refresh maintenance history.");
+    }
+
+    const mappedRecords: Maintenance[] = refreshResult.data.map(
+      (row: {
+        maintenance_id: number;
+        battery_id: number;
+        brand: string;
+        model: string;
+        service_date: string;
+        issue_description: string | null;
+        action_taken: string | null;
+        cost: number | string | null;
+        service_center: string | null;
+        location_id: number;
+      }) => ({
+        id: `MNT${String(row.maintenance_id).padStart(3, "0")}`,
+        battery: `BAT${String(row.battery_id).padStart(3, "0")}`,
+        laptop: `${row.brand} ${row.model}`,
+        date: String(row.service_date).slice(0, 10),
+        issue: row.issue_description || "Not specified",
+        action: row.action_taken || "Not specified",
+        cost: Number(row.cost ?? 0),
+        centre: row.service_center || "Not specified",
+        location: `Location ID ${row.location_id}`,
+        status: row.action_taken?.trim() ? "Completed" : "Pending",
+      })
+    );
+
+    setRecords(mappedRecords);
     setDate("");
     setIssue("");
     setAction("");
@@ -127,7 +206,18 @@ export default function MaintenancePage() {
     setCentre("");
     setLocation("");
     setShowForm(false);
+
+    alert("Maintenance record saved to MySQL!");
+  } catch (error) {
+    console.error("Failed to save maintenance record:", error);
+
+    alert(
+      error instanceof Error
+        ? error.message
+        : "Unable to save maintenance record."
+    );
   }
+}
 
   return (
     <main className="min-h-screen bg-[#f5f7fb] p-5 text-slate-800 md:p-10">
@@ -321,7 +411,7 @@ export default function MaintenancePage() {
         </div>
 
         <p className="mt-4 text-xs text-slate-400">
-          Maintenance records are loaded from MySQL. Adding new records is not yet saved to MySQL.
+          Maintenance records are loaded from and saved to MySQL.
         </p>
       </section>
     </main>
