@@ -42,6 +42,7 @@ export default function Home() {
   const [filter, setFilter] = useState("All");
   const [activePage, setActivePage] = useState("Dashboard");
   const [batteries, setBatteries] = useState<Battery[]>([]);
+  const [registeredLaptopCount, setRegisteredLaptopCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [diagnosticReports, setDiagnosticReports] = useState<DiagnosticReport[]>([]);
@@ -90,6 +91,9 @@ export default function Home() {
 
         const batteryRows: BatteryApiRecord[] = batteryPayload.data ?? [];
         const laptopRows: LaptopApiRecord[] = laptopPayload.data ?? [];
+	if (!cancelled) {
+  setRegisteredLaptopCount(laptopRows.length);
+}
         const laptopsById = new Map(
           laptopRows.map((laptop) => [
             Number(laptop.laptop_id),
@@ -242,7 +246,7 @@ export default function Home() {
             {[
               {
                 label: "Registered laptops",
-                value: String(new Set(batteries.map((battery) => battery.laptop)).size).padStart(2, "0"),
+                value: String(registeredLaptopCount).padStart(2, "0"),
                 note: "From MySQL",
                 icon: "▣",
               },

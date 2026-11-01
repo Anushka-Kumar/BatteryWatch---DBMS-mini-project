@@ -94,46 +94,100 @@ export default function ChargingSessionsPage() {
           0
         ) / sessions.length;
 
-  function addSession(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+ async function addSession(event: React.FormEvent<HTMLFormElement>) {
+  event.preventDefault();
 
-    const from = Number(startPercent);
-    const to = Number(endPercent);
-    const temp = Number(temperature);
+  const from = Number(startPercent);
+  const to = Number(endPercent);
+  const temp = Number(temperature);
 
-    if (new Date(end) <= new Date(start)) {
-      alert("End time must be after start time.");
-      return;
+  if (new Date(end) <= new Date(start)) {
+    alert("End time must be after start time.");
+    return;
+  }
+
+  if (to <= from) {
+    alert("End battery percentage must be greater than start percentage.");
+    return;
+  }
+
+  if (from < 0 || to > 100 || temp < 0 || temp > 100) {
+    alert("Enter valid percentages and temperature.");
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/charging-sessions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        battery_id: Number(battery.replace("BAT", "")),
+        start_time: start,
+        end_time: end,
+        start_percentage: from,
+        end_percentage: to,
+        temperature: temp,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.error || "Failed to save charging session");
     }
 
-    if (to <= from) {
-      alert("End battery percentage must be greater than start percentage.");
-      return;
-    }
+    alert("Charging session saved to MySQL!");
 
-    if (from < 0 || to > 100 || temp < 0 || temp > 100) {
-      alert("Enter valid percentages and temperature.");
-      return;
-    }
-
-    const newSession: Session = {
-      id: `CHG${String(Date.now()).slice(-6)}`,
-      laptop,
-      battery,
-      start,
-      end,
-      startPercent: from,
-      endPercent: to,
-      temperature: temp,
-      cycles: 0,
-    };
-
-    setSessions((current) => [newSession, ...current]);
     setStart("");
     setEnd("");
     setShowForm(false);
-  }
 
+    const refreshResponse = await fetch("/api/charging-sessions", {
+      cache: "no-store",
+    });
+    const refreshResult = await refreshResponse.json();
+
+    if (!refreshResponse.ok || !refreshResult.success) {
+      throw new Error("Session saved, but failed to refresh the list.");
+    }
+
+    const mappedSessions: Session[] = refreshResult.data.map((row: {
+      session_id: number;
+      battery_id: number;
+      brand: string;
+      model: string;
+      start_time: string;
+      end_time: string | null;
+      start_percentage: number | string;
+      end_percentage: number | string;
+      temperature: number | string | null;
+      charge_cycles: number | null;
+    }) => ({
+      id: `CHG${String(row.session_id).padStart(3, "0")}`,
+      laptop: `${row.brand} ${row.model}`,
+      battery: `BAT${String(row.battery_id).padStart(3, "0")}`,
+      start: String(row.start_time).replace("Z", "").slice(0, 16),
+      end: row.end_time
+        ? String(row.end_time).replace("Z", "").slice(0, 16)
+        : "In progress",
+      startPercent: Number(row.start_percentage),
+      endPercent: Number(row.end_percentage),
+      temperature: row.temperature == null ? 0 : Number(row.temperature),
+      cycles: Number(row.charge_cycles ?? 0),
+    }));
+
+    setSessions(mappedSessions);
+  } catch (error) {
+    console.error("Failed to save charging session:", error);
+    alert(
+      error instanceof Error
+        ? error.message
+        : "Unable to save charging session."
+    );
+  }
+}
   return (
     <main className="min-h-screen bg-[#f5f7fb] p-5 text-slate-800 md:p-10">
       <a href="/" className="text-sm font-medium text-emerald-700 hover:underline">
