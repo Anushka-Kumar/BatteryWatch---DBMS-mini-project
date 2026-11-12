@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 
 function LoginForm() {
-  const router = useRouter();
+  
   const searchParams = useSearchParams();
 
   const [email, setEmail] = useState("");
@@ -33,8 +33,8 @@ function LoginForm() {
         return;
       }
 
-      router.push("/");
-      router.refresh();
+      window.location.replace("/");
+return;
     } catch {
       setError("Unable to connect. Please try again.");
     } finally {

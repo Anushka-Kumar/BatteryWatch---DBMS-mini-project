@@ -1,9 +1,17 @@
+
 import { NextResponse } from "next/server";
 import pool from "@/lib/mysql";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET() {
   try {
-    const [rows] = await pool.query(`
+    const auth = await requireAuth();
+
+    if (auth instanceof NextResponse) {
+      return auth;
+    }
+
+    let query = `
       SELECT
         cs.session_id,
         cs.battery_id,
@@ -18,8 +26,18 @@ export async function GET() {
       FROM charging_session cs
       JOIN batteries b ON cs.battery_id = b.battery_id
       JOIN laptops l ON b.laptop_id = l.laptop_id
-      ORDER BY cs.start_time DESC
-    `);
+    `;
+
+    const params: number[] = [];
+
+    if (auth.user.role !== "admin") {
+      query += ` WHERE l.user_id = ?`;
+      params.push(auth.user.userId);
+    }
+
+    query += ` ORDER BY cs.start_time DESC`;
+
+    const [rows] = await pool.query(query, params);
 
     return NextResponse.json({
       success: true,
@@ -38,8 +56,15 @@ export async function GET() {
     );
   }
 }
+
 export async function POST(request: Request) {
   try {
+    const auth = await requireAuth();
+
+    if (auth instanceof NextResponse) {
+      return auth;
+    }
+
     const body = await request.json();
 
     const batteryId = Number(body.battery_id);
@@ -49,15 +74,21 @@ export async function POST(request: Request) {
     const endPercentage = Number(body.end_percentage);
     const temperature = Number(body.temperature);
 
+    const startDate = new Date(startTime);
+    const endDate = new Date(endTime);
+
     if (
       !Number.isInteger(batteryId) ||
       batteryId <= 0 ||
       !startTime ||
       !endTime ||
-      new Date(endTime) <= new Date(startTime) ||
+      !Number.isFinite(startDate.getTime()) ||
+      !Number.isFinite(endDate.getTime()) ||
+      endDate <= startDate ||
       !Number.isFinite(startPercentage) ||
       !Number.isFinite(endPercentage) ||
       startPercentage < 0 ||
+      startPercentage > 100 ||
       endPercentage > 100 ||
       endPercentage <= startPercentage ||
       !Number.isFinite(temperature) ||
@@ -67,6 +98,37 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { success: false, error: "Invalid charging session data" },
         { status: 400 }
+      );
+    }
+
+    // Verify that the battery belongs to the logged-in user.
+    // Admins are allowed to use any battery.
+    let ownershipQuery = `
+      SELECT b.battery_id
+      FROM batteries b
+      JOIN laptops l ON b.laptop_id = l.laptop_id
+      WHERE b.battery_id = ?
+    `;
+
+    const ownershipParams: number[] = [batteryId];
+
+    if (auth.user.role !== "admin") {
+      ownershipQuery += ` AND l.user_id = ?`;
+      ownershipParams.push(auth.user.userId);
+    }
+
+    const [ownedBatteries]: any = await pool.query(
+      ownershipQuery,
+      ownershipParams
+    );
+
+    if (!Array.isArray(ownedBatteries) || ownedBatteries.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "You are not authorized to use this battery.",
+        },
+        { status: 403 }
       );
     }
 

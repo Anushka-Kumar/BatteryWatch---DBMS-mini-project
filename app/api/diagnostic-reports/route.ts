@@ -2,12 +2,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMongoDb } from "@/lib/mongodb";
 import pool from "@/lib/mysql";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET() {
   try {
+    const auth = await requireAuth();
+    if (auth instanceof NextResponse) return auth;
+
     const db = await getMongoDb();
 
-    const documents = await db
+    let documents = await db
       .collection("diagnostic_reports")
       .find({})
       .toArray();
@@ -20,13 +24,16 @@ export async function GET() {
       ),
     ];
 
-    const laptopMap = new Map<number, { brand: string; model: string }>();
+    const laptopMap = new Map<
+      number,
+      { brand: string; model: string; user_id: number }
+    >();
 
     if (batteryIds.length > 0) {
       const placeholders = batteryIds.map(() => "?").join(", ");
 
       const [laptopRows] = await pool.query(
-        `SELECT b.battery_id, l.brand, l.model
+        `SELECT b.battery_id, l.brand, l.model, l.user_id
          FROM batteries b
          JOIN laptops l ON b.laptop_id = l.laptop_id
          WHERE b.battery_id IN (${placeholders})`,
@@ -37,12 +44,22 @@ export async function GET() {
         battery_id: number;
         brand: string;
         model: string;
+        user_id: number;
       }>) {
         laptopMap.set(Number(row.battery_id), {
           brand: row.brand,
           model: row.model,
+          user_id: Number(row.user_id),
         });
       }
+    }
+
+    // Normal users only receive reports for their own laptops.
+    if (auth.user.role !== "admin") {
+      documents = documents.filter((doc) => {
+        const laptop = laptopMap.get(Number(doc.battery_id));
+        return laptop?.user_id === auth.user.userId;
+      });
     }
 
     const data = documents.map((doc) => {
@@ -76,6 +93,20 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth();
+    if (auth instanceof NextResponse) return auth;
+
+    // Only admins can create diagnostic reports.
+    if (auth.user.role !== "admin") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Only admins can create diagnostic reports.",
+        },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
 
     const batteryId = Number(body.battery_id);
@@ -98,6 +129,7 @@ export async function POST(request: NextRequest) {
       !diagnosis ||
       !temperatureStatus ||
       !analysisDate ||
+      !Number.isFinite(new Date(analysisDate).getTime()) ||
       !["Low", "Medium", "High", "Critical"].includes(riskLevel) ||
       observations.length === 0 ||
       recommendations.length === 0
@@ -108,7 +140,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Confirm that the selected battery exists in MySQL.
     const [batteryRows]: any = await pool.execute(
       "SELECT battery_id FROM batteries WHERE battery_id = ?",
       [batteryId]

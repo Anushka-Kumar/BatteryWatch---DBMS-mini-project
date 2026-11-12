@@ -1,10 +1,14 @@
 
 import { NextResponse } from "next/server";
 import pool from "@/lib/mysql";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET() {
+  const auth = await requireAuth();
+  if (auth.error) return auth.error;
+
   try {
-    const [rows] = await pool.query(`
+    let query = `
       SELECT
         l.laptop_id,
         l.user_id,
@@ -16,25 +20,39 @@ export async function GET() {
         b.battery_id
       FROM laptops l
       LEFT JOIN batteries b ON l.laptop_id = b.laptop_id
-      ORDER BY l.laptop_id
-    `);
+    `;
+
+    const params: number[] = [];
+
+    // Admins can see all laptops. Users can see only their own.
+    if (auth.user.role !== "admin") {
+      query += " WHERE l.user_id = ?";
+      params.push(auth.user.userId);
+    }
+
+    query += " ORDER BY l.laptop_id";
+
+    const [rows]: any = await pool.execute(query, params);
 
     return NextResponse.json({
       success: true,
-      count: Array.isArray(rows) ? rows.length : 0,
+      count: rows.length,
       data: rows,
     });
   } catch (error) {
     console.error("Laptops API error:", error);
 
     return NextResponse.json(
-      { success: false, error: "Unable to fetch laptop records" },
+      { success: false, error: "Unable to fetch laptop records." },
       { status: 500 }
     );
   }
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuth();
+  if (auth.error) return auth.error;
+
   let connection: any;
 
   try {
@@ -47,9 +65,7 @@ export async function POST(request: Request) {
     const os =
       typeof body.os === "string" ? body.os.trim() : "";
     const serialNo =
-      typeof body.serial_no === "string"
-        ? body.serial_no.trim()
-        : "";
+      typeof body.serial_no === "string" ? body.serial_no.trim() : "";
     const purchaseDate =
       typeof body.purchase_date === "string"
         ? body.purchase_date.trim()
@@ -58,7 +74,14 @@ export async function POST(request: Request) {
       typeof body.battery_install_date === "string"
         ? body.battery_install_date.trim()
         : "";
-    const userId = Number(body.user_id);
+
+    // Normal users can ONLY register laptops under their own account.
+    // Admins may register for another existing user.
+    const userId =
+      auth.user.role === "admin"
+        ? Number(body.user_id || auth.user.userId)
+        : auth.user.userId;
+
     const typeId = Number(body.type_id);
     const initialCapacity = Number(body.initial_capacity);
     const currentCapacity = Number(body.current_capacity);
@@ -79,10 +102,10 @@ export async function POST(request: Request) {
       !Number.isInteger(typeId) ||
       typeId <= 0 ||
       !Number.isFinite(initialCapacity) ||
-initialCapacity <= 0 ||
-!Number.isFinite(currentCapacity) ||
-currentCapacity <= 0 ||
-currentCapacity > initialCapacity ||
+      initialCapacity <= 0 ||
+      !Number.isFinite(currentCapacity) ||
+      currentCapacity <= 0 ||
+      currentCapacity > initialCapacity ||
       !batteryInstallDate
     ) {
       return NextResponse.json(
@@ -93,6 +116,17 @@ currentCapacity > initialCapacity ||
         { status: 400 }
       );
     }
+
+    const healthPercentage = Number(
+      ((currentCapacity / initialCapacity) * 100).toFixed(2)
+    );
+
+    const batteryStatus =
+      healthPercentage >= 80
+        ? "HEALTHY"
+        : healthPercentage >= 60
+          ? "DEGRADING"
+          : "REPLACE_SOON";
 
     connection = await pool.getConnection();
     await connection.beginTransaction();
@@ -141,18 +175,18 @@ currentCapacity > initialCapacity ||
 
     const [batteryResult]: any = await connection.execute(
       `INSERT INTO batteries
-  (laptop_id, type_id, initial_capacity, current_capacity,
-   install_date, status, health_percentage)
- VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        (laptop_id, type_id, initial_capacity, current_capacity,
+         install_date, status, health_percentage)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
-  laptopId,
-  typeId,
-  initialCapacity,
-  currentCapacity,
-  batteryInstallDate,
-  batteryStatus,
-  healthPercentage,
-]
+        laptopId,
+        typeId,
+        initialCapacity,
+        currentCapacity,
+        batteryInstallDate,
+        batteryStatus,
+        healthPercentage,
+      ]
     );
 
     await connection.commit();

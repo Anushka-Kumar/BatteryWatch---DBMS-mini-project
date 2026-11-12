@@ -45,8 +45,47 @@ export default function Home() {
   const [registeredLaptopCount, setRegisteredLaptopCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+const [currentUser, setCurrentUser] = useState<{
+  userId: number;
+  name: string;
+  email: string;
+  role: "admin" | "user";
+} | null>(null);
   const [diagnosticReports, setDiagnosticReports] = useState<DiagnosticReport[]>([]);
+async function handleLogout() {
+  try {
+    await fetch("/api/auth/logout", {
+      method: "POST",
+    });
+  } catch (error) {
+    console.error("Logout error:", error);
+  } finally {
+    window.location.replace("/login");
+  }
+}
   useEffect(() => {
+  async function loadUser() {
+    try {
+      const response = await fetch("/api/auth/me", {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        window.location.replace("/login");
+        return;
+      }
+
+      const result = await response.json();
+      setCurrentUser(result.user);
+    } catch (error) {
+      console.error("Failed to load user:", error);
+    }
+  }
+
+  loadUser();
+}, []);
+
+useEffect(() => {
   async function fetchDiagnosticReports() {
     try {
       const response = await fetch("/api/diagnostic-reports", {
@@ -221,9 +260,23 @@ export default function Home() {
               Monitor battery condition and degradation.
             </p>
           </div>
-          <div className="rounded-full border border-slate-200 px-4 py-2 text-sm">
-            ● Demo environment
-          </div>
+          <div className="flex flex-wrap items-center gap-3">
+  <div className="text-right">
+    <p className="text-sm font-semibold text-slate-800">
+      {currentUser?.name ?? "Loading..."}
+    </p>
+    <p className="text-xs capitalize text-slate-500">
+      {currentUser?.role ?? ""}
+    </p>
+  </div>
+
+  <button
+    onClick={handleLogout}
+    className="rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
+  >
+    Logout
+  </button>
+</div>
         </header>
 
         <div className="space-y-7 p-5 md:p-9">
