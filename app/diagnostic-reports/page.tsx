@@ -14,13 +14,29 @@ type DiagnosticReport = {
   brand?: string;
   model?: string;
 };
-
+type RegisteredLaptop = {
+  laptop_id: number;
+  brand: string;
+  model: string;
+  battery_id: number | null;
+};
 export default function DiagnosticReportsPage() {
   const [reports, setReports] = useState<DiagnosticReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [riskFilter, setRiskFilter] = useState("All");
+const [showForm, setShowForm] = useState(false);
+const [laptops, setLaptops] = useState<RegisteredLaptop[]>([]);
+const [selectedLaptopId, setSelectedLaptopId] = useState("");
+
+const [diagnosis, setDiagnosis] = useState("");
+const [observationsText, setObservationsText] = useState("");
+const [temperatureStatus, setTemperatureStatus] = useState("NORMAL");
+const [recommendationsText, setRecommendationsText] = useState("");
+const [analysisDate, setAnalysisDate] = useState("");
+const [newRiskLevel, setNewRiskLevel] = useState("Low");
+const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     async function fetchReports() {
@@ -69,6 +85,35 @@ export default function DiagnosticReportsPage() {
 
     fetchReports();
   }, []);
+useEffect(() => {
+  async function fetchLaptops() {
+    try {
+      const response = await fetch("/api/laptops", {
+        cache: "no-store",
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error("Unable to load registered laptops.");
+      }
+
+      const availableLaptops: RegisteredLaptop[] = result.data.filter(
+        (item: RegisteredLaptop) => item.battery_id !== null
+      );
+
+      setLaptops(availableLaptops);
+
+      if (availableLaptops.length > 0) {
+        setSelectedLaptopId(String(availableLaptops[0].laptop_id));
+      }
+    } catch (error) {
+      console.error("Failed to fetch laptops:", error);
+    }
+  }
+
+  fetchLaptops();
+}, []);
 
   const filteredReports = reports.filter((report) => {
     const searchableText = [
@@ -120,6 +165,101 @@ export default function DiagnosticReportsPage() {
     }
   }
 
+async function addReport(event: React.FormEvent<HTMLFormElement>) {
+  event.preventDefault();
+
+  const selectedLaptop = laptops.find(
+    (item) => item.laptop_id === Number(selectedLaptopId)
+  );
+
+  if (!selectedLaptop || selectedLaptop.battery_id === null) {
+    alert("Please select a registered laptop with an assigned battery.");
+    return;
+  }
+
+  const observations = observationsText
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const recommendations = recommendationsText
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (
+    !diagnosis.trim() ||
+    !analysisDate ||
+    observations.length === 0 ||
+    recommendations.length === 0 ||
+    !temperatureStatus.trim()
+  ) {
+    alert("Please complete all diagnostic report fields.");
+    return;
+  }
+
+  setSaving(true);
+
+  try {
+    const response = await fetch("/api/diagnostic-reports", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        battery_id: selectedLaptop.battery_id,
+        diagnosis: diagnosis.trim(),
+        observations,
+        temperature_status: temperatureStatus,
+        recommendations,
+        analysis_date: analysisDate,
+        risk_level: newRiskLevel,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.error || "Unable to save diagnostic report.");
+    }
+
+    const newReport: DiagnosticReport = {
+      id: result.id,
+      battery_id: selectedLaptop.battery_id,
+      diagnosis: diagnosis.trim(),
+      observations,
+      temperature_status: temperatureStatus,
+      recommendations,
+      analysis_date: analysisDate,
+      risk_level: newRiskLevel,
+      brand: selectedLaptop.brand,
+      model: selectedLaptop.model,
+    };
+
+    setReports((current) => [newReport, ...current]);
+
+    setDiagnosis("");
+    setObservationsText("");
+    setTemperatureStatus("NORMAL");
+    setRecommendationsText("");
+    setAnalysisDate("");
+    setNewRiskLevel("Low");
+    setShowForm(false);
+
+    alert("Diagnostic report saved to MongoDB!");
+  } catch (error) {
+    console.error("Failed to save diagnostic report:", error);
+    alert(
+      error instanceof Error
+        ? error.message
+        : "Unable to save diagnostic report."
+    );
+  } finally {
+    setSaving(false);
+  }
+}
+
+
   return (
     <main className="min-h-screen bg-[#f5f7fb] p-5 text-slate-800 md:p-10">
       <a
@@ -129,7 +269,7 @@ export default function DiagnosticReportsPage() {
         ← Back to Dashboard
       </a>
 
-      <header className="mb-8">
+      <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <p className="text-sm font-semibold uppercase tracking-widest text-emerald-600">
           BatteryWatch / Diagnostics
         </p>
@@ -138,8 +278,130 @@ export default function DiagnosticReportsPage() {
         </h1>
         <p className="mt-2 text-slate-500">
           Review battery diagnoses, observations and recommendations.
+<button
+  onClick={() => setShowForm(!showForm)}
+  className="rounded-lg bg-emerald-500 px-5 py-3 font-semibold text-slate-950"
+>
+  {showForm ? "Cancel" : "+ Add Diagnostic Report"}
+</button>
         </p>
       </header>
+
+{showForm && (
+  <form
+    onSubmit={addReport}
+    className="mb-8 grid gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:grid-cols-2"
+  >
+    <h2 className="text-lg font-bold sm:col-span-2">
+      Create Diagnostic Report
+    </h2>
+
+    <label className="text-sm font-medium sm:col-span-2">
+      Select Laptop
+      <select
+        required
+        value={selectedLaptopId}
+        onChange={(event) => setSelectedLaptopId(event.target.value)}
+        className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+      >
+        {laptops.length === 0 && (
+          <option value="">No registered laptops with batteries</option>
+        )}
+
+        {laptops.map((item) => (
+          <option
+            key={item.laptop_id}
+            value={String(item.laptop_id)}
+          >
+            {item.brand} {item.model}
+          </option>
+        ))}
+      </select>
+    </label>
+
+    <label className="text-sm font-medium">
+      Diagnosis
+      <input
+        required
+        value={diagnosis}
+        onChange={(event) => setDiagnosis(event.target.value)}
+        placeholder="Enter diagnosis"
+        className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+      />
+    </label>
+
+    <label className="text-sm font-medium">
+      Analysis date
+      <input
+        required
+        type="date"
+        value={analysisDate}
+        onChange={(event) => setAnalysisDate(event.target.value)}
+        className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+      />
+    </label>
+
+    <label className="text-sm font-medium">
+      Risk level
+      <select
+        value={newRiskLevel}
+        onChange={(event) => setNewRiskLevel(event.target.value)}
+        className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+      >
+        <option value="Low">Low</option>
+        <option value="Medium">Medium</option>
+        <option value="High">High</option>
+        <option value="Critical">Critical</option>
+      </select>
+    </label>
+
+    <label className="text-sm font-medium">
+      Temperature status
+      <select
+        value={temperatureStatus}
+        onChange={(event) => setTemperatureStatus(event.target.value)}
+        className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+      >
+        <option value="NORMAL">NORMAL</option>
+        <option value="WARNING">WARNING</option>
+        <option value="CRITICAL">CRITICAL</option>
+      </select>
+    </label>
+
+    <label className="text-sm font-medium sm:col-span-2">
+      Observations (one per line)
+      <textarea
+        required
+        rows={3}
+        value={observationsText}
+        onChange={(event) => setObservationsText(event.target.value)}
+        placeholder={"Battery capacity has decreased\nCharging temperature is elevated"}
+        className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+      />
+    </label>
+
+    <label className="text-sm font-medium sm:col-span-2">
+      Recommendations (one per line)
+      <textarea
+        required
+        rows={3}
+        value={recommendationsText}
+        onChange={(event) => setRecommendationsText(event.target.value)}
+        placeholder={"Monitor battery health\nAvoid excessive heating"}
+        className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+      />
+    </label>
+
+    <button
+      type="submit"
+      disabled={saving || laptops.length === 0}
+      className="rounded-lg bg-[#14243a] px-5 py-3 font-semibold text-white disabled:opacity-50 sm:col-span-2"
+    >
+      {saving ? "Saving..." : "Save Diagnostic Report"}
+    </button>
+  </form>
+)}
+
 
       <section className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {[

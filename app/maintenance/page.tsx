@@ -15,7 +15,12 @@ type Maintenance = {
   location: string;
   status: "Completed" | "Pending";
 };
-
+type RegisteredLaptop = {
+  laptop_id: number;
+  brand: string;
+  model: string;
+  battery_id: number | null;
+};
 export default function MaintenancePage() {
   const [records, setRecords] = useState<Maintenance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,9 +28,8 @@ export default function MaintenancePage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
   const [showForm, setShowForm] = useState(false);
-
-  const [battery, setBattery] = useState("BAT001");
-  const [laptop, setLaptop] = useState("Dell Inspiron 15");
+  const [laptops, setLaptops] = useState<RegisteredLaptop[]>([]);
+  const [selectedLaptopId, setSelectedLaptopId] = useState("");
   const [date, setDate] = useState("");
   const [issue, setIssue] = useState("");
   const [action, setAction] = useState("");
@@ -81,7 +85,35 @@ export default function MaintenancePage() {
 
     fetchMaintenanceRecords();
   }, []);
+useEffect(() => {
+  async function fetchLaptops() {
+    try {
+      const response = await fetch("/api/laptops", {
+        cache: "no-store",
+      });
 
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error("Unable to load registered laptops.");
+      }
+
+      const registeredLaptops: RegisteredLaptop[] = result.data.filter(
+        (item: RegisteredLaptop) => item.battery_id !== null
+      );
+
+      setLaptops(registeredLaptops);
+
+      if (registeredLaptops.length > 0) {
+        setSelectedLaptopId(String(registeredLaptops[0].laptop_id));
+      }
+    } catch (error) {
+      console.error("Failed to fetch laptops:", error);
+    }
+  }
+
+  fetchLaptops();
+}, []);
 
   const filtered = records.filter((record) => {
     const matchesSearch =
@@ -101,7 +133,16 @@ async function addRecord(event: React.FormEvent<HTMLFormElement>) {
   event.preventDefault();
 
   const amount = Number(cost);
-  const batteryId = Number(battery.replace("BAT", ""));
+  const selectedLaptop = laptops.find(
+  (item) => item.laptop_id === Number(selectedLaptopId)
+);
+
+if (!selectedLaptop || selectedLaptop.battery_id === null) {
+  alert("Please select a registered laptop with an assigned battery.");
+  return;
+}
+
+const batteryId = selectedLaptop.battery_id;
 
   if (!Number.isFinite(amount) || amount < 0) {
     alert("Enter a valid non-negative service cost.");
@@ -268,39 +309,29 @@ async function addRecord(event: React.FormEvent<HTMLFormElement>) {
         >
           <h2 className="text-lg font-bold sm:col-span-2">New maintenance record</h2>
 
-          <label className="text-sm font-medium">
-            Battery
-            <select
-              value={battery}
-              onChange={(event) => {
-                const id = event.target.value;
-                setBattery(id);
-                const names: Record<string, string> = {
-                  BAT001: "Dell Inspiron 15",
-                  BAT002: "HP Pavilion 14",
-                  BAT003: "Lenovo IdeaPad Slim 5",
-                  BAT004: "ASUS VivoBook 15",
-                };
-                setLaptop(names[id]);
-              }}
-              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
-            >
-              <option value="BAT001">BAT001</option>
-              <option value="BAT002">BAT002</option>
-              <option value="BAT003">BAT003</option>
-              <option value="BAT004">BAT004</option>
-            </select>
-          </label>
+          <label className="text-sm font-medium sm:col-span-2">
+  Select Laptop
+  <select
+    required
+    value={selectedLaptopId}
+    onChange={(event) => setSelectedLaptopId(event.target.value)}
+    className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+  >
+    {laptops.length === 0 && (
+      <option value="">No registered laptops with batteries</option>
+    )}
 
-          <label className="text-sm font-medium">
-            Laptop
-            <input readOnly value={laptop} className="mt-2 block w-full rounded-lg border border-slate-200 bg-slate-50 p-3" />
-          </label>
+    {laptops.map((item) => (
+      <option
+        key={item.laptop_id}
+        value={String(item.laptop_id)}
+      >
+        {item.brand} {item.model}
+      </option>
+    ))}
+  </select>
+</label>
 
-          <label className="text-sm font-medium">
-            Service date
-            <input required type="date" value={date} onChange={(event) => setDate(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-200 p-3" />
-          </label>
 
           <label className="text-sm font-medium">
             Service cost (₹)
