@@ -14,6 +14,12 @@ type Session = {
   temperature: number;
   cycles: number;
 };
+type RegisteredLaptop = {
+  laptop_id: number;
+  brand: string;
+  model: string;
+  battery_id: number | null;
+};
 
 export default function ChargingSessionsPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -22,8 +28,8 @@ export default function ChargingSessionsPage() {
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
 
-  const [battery, setBattery] = useState("BAT001");
-  const [laptop, setLaptop] = useState("Dell Inspiron 15");
+  const [laptops, setLaptops] = useState<RegisteredLaptop[]>([]);
+  const [selectedLaptopId, setSelectedLaptopId] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [startPercent, setStartPercent] = useState("20");
@@ -78,7 +84,35 @@ export default function ChargingSessionsPage() {
 
     fetchSessions();
   }, []);
+useEffect(() => {
+  async function fetchLaptops() {
+    try {
+      const response = await fetch("/api/laptops", {
+        cache: "no-store",
+      });
 
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error("Unable to load registered laptops.");
+      }
+
+      const registeredLaptops: RegisteredLaptop[] = result.data.filter(
+        (item: RegisteredLaptop) => item.battery_id !== null
+      );
+
+      setLaptops(registeredLaptops);
+
+      if (registeredLaptops.length > 0) {
+        setSelectedLaptopId(String(registeredLaptops[0].laptop_id));
+      }
+    } catch (error) {
+      console.error("Failed to fetch registered laptops:", error);
+    }
+  }
+
+  fetchLaptops();
+}, []);
 
   const filtered = sessions.filter((session) =>
     `${session.id} ${session.laptop} ${session.battery}`
@@ -96,7 +130,10 @@ export default function ChargingSessionsPage() {
 
  async function addSession(event: React.FormEvent<HTMLFormElement>) {
   event.preventDefault();
-
+if (!selectedLaptopId) {
+  alert("Please select a registered laptop with an assigned battery.");
+  return;
+}
   const from = Number(startPercent);
   const to = Number(endPercent);
   const temp = Number(temperature);
@@ -123,7 +160,11 @@ export default function ChargingSessionsPage() {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        battery_id: Number(battery.replace("BAT", "")),
+  battery_id: Number(
+    laptops.find(
+      (item) => item.laptop_id === Number(selectedLaptopId)
+    )?.battery_id
+  ),
         start_time: start,
         end_time: end,
         start_percentage: from,
@@ -237,37 +278,29 @@ export default function ChargingSessionsPage() {
         >
           <h2 className="text-lg font-bold sm:col-span-2">Record a charging session</h2>
 
-          <label className="text-sm font-medium">
-            Battery ID
-            <select
-              value={battery}
-              onChange={(event) => {
-                setBattery(event.target.value);
-                const names: Record<string, string> = {
-                  BAT001: "Dell Inspiron 15",
-                  BAT002: "HP Pavilion 14",
-                  BAT003: "Lenovo IdeaPad Slim 5",
-                  BAT004: "ASUS VivoBook 15",
-                };
-                setLaptop(names[event.target.value]);
-              }}
-              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
-            >
-              <option value="BAT001">BAT001</option>
-              <option value="BAT002">BAT002</option>
-              <option value="BAT003">BAT003</option>
-              <option value="BAT004">BAT004</option>
-            </select>
-          </label>
+          <label className="text-sm font-medium sm:col-span-2">
+  Select Laptop
+  <select
+    required
+    value={selectedLaptopId}
+    onChange={(event) => setSelectedLaptopId(event.target.value)}
+    className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+  >
+    {laptops.length === 0 && (
+      <option value="">No registered laptops with batteries</option>
+    )}
 
-          <label className="text-sm font-medium">
-            Laptop
-            <input
-              readOnly
-              value={laptop}
-              className="mt-2 block w-full rounded-lg border border-slate-200 bg-slate-50 p-3"
-            />
-          </label>
+    {laptops.map((item) => (
+      <option
+        key={item.laptop_id}
+        value={String(item.laptop_id)}
+      >
+        {item.brand} {item.model}
+      </option>
+    ))}
+  </select>
+</label>
+
 
           <label className="text-sm font-medium">
             Start time
@@ -401,7 +434,7 @@ export default function ChargingSessionsPage() {
         </div>
 
         <p className="mt-4 text-xs text-slate-400">
-          Charging sessions are loaded from MySQL. New sessions are not yet saved to MySQL.
+          Charging sessions are loaded from and saved to MySQL.
         </p>
       </section>
     </main>

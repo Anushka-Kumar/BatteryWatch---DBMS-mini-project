@@ -1,46 +1,20 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-const batteries = [
-  {
-    id: "BAT001",
-    laptop: "Dell Inspiron 15",
-    initial: 50000,
-    current: 42000,
-    cycles: 385,
-    temperature: 34,
-    installed: "2024-06-20",
-  },
-  {
-    id: "BAT002",
-    laptop: "HP Pavilion 14",
-    initial: 50000,
-    current: 31000,
-    cycles: 612,
-    temperature: 41,
-    installed: "2023-10-01",
-  },
-  {
-    id: "BAT003",
-    laptop: "Lenovo IdeaPad Slim 5",
-    initial: 48000,
-    current: 18000,
-    cycles: 890,
-    temperature: 46,
-    installed: "2022-04-01",
-  },
-  {
-    id: "BAT004",
-    laptop: "ASUS VivoBook 15",
-    initial: 50000,
-    current: 45500,
-    cycles: 210,
-    temperature: 31,
-    installed: "2025-01-15",
-  },
-];
+type Battery = {
+  battery_id: number;
+  laptop_id: number;
+  initial_capacity: number;
+  current_capacity: number;
+  install_date: string;
+  health_percentage: number;
+  brand?: string;
+  model?: string;
+  temperature: number | null;
+  cycles: number | null;
+};
 
 function getStatus(health: number) {
   if (health >= 80) return "Healthy";
@@ -49,14 +23,94 @@ function getStatus(health: number) {
 }
 
 export default function BatteryHealthPage() {
+  const [batteries, setBatteries] = useState<Battery[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    async function fetchBatteries() {
+      try {
+        const [batteryResponse, laptopResponse, sessionResponse] =
+          await Promise.all([
+            fetch("/api/batteries", { cache: "no-store" }),
+            fetch("/api/laptops", { cache: "no-store" }),
+            fetch("/api/charging-sessions", { cache: "no-store" }),
+          ]);
+
+        const batteryResult = await batteryResponse.json();
+        const laptopResult = await laptopResponse.json();
+        const sessionResult = await sessionResponse.json();
+
+        if (!batteryResponse.ok || !batteryResult.success) {
+          throw new Error("Unable to fetch batteries");
+        }
+
+        if (!laptopResponse.ok || !laptopResult.success) {
+          throw new Error("Unable to fetch laptops");
+        }
+
+        if (!sessionResponse.ok || !sessionResult.success) {
+          throw new Error("Unable to fetch charging sessions");
+        }
+
+        const mapped: Battery[] = batteryResult.data.map((battery: any) => {
+          const laptop = laptopResult.data.find(
+            (item: any) => Number(item.laptop_id) === Number(battery.laptop_id)
+          );
+
+          const sessions = sessionResult.data.filter(
+            (item: any) => Number(item.battery_id) === Number(battery.battery_id)
+          );
+
+          const latestSession = sessions[0];
+
+          return {
+            battery_id: Number(battery.battery_id),
+            laptop_id: Number(battery.laptop_id),
+            initial_capacity: Number(battery.initial_capacity),
+            current_capacity: Number(battery.current_capacity),
+            install_date: String(battery.install_date),
+            health_percentage:
+              (Number(battery.current_capacity) /
+                Number(battery.initial_capacity)) *
+              100,
+            brand: laptop?.brand,
+            model: laptop?.model,
+            temperature:
+              latestSession?.temperature == null
+                ? null
+                : Number(latestSession.temperature),
+            cycles:
+              latestSession?.charge_cycles == null
+                ? null
+                : Number(latestSession.charge_cycles),
+          };
+        });
+
+        setBatteries(mapped);
+      } catch (err) {
+        console.error("Battery Health error:", err);
+        setError("Unable to load battery data from MySQL.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchBatteries();
+  }, []);
 
   const records = batteries
     .map((battery) => ({
       ...battery,
-      health: (battery.current / battery.initial) * 100,
-      lost: battery.initial - battery.current,
+      id: `BAT${String(battery.battery_id).padStart(3, "0")}`,
+      laptop: `${battery.brand ?? ""} ${battery.model ?? ""}`.trim() || "Laptop unavailable",
+      initial: battery.initial_capacity,
+      current: battery.current_capacity,
+      installed: battery.install_date.slice(0, 10),
+      health: battery.health_percentage,
+      lost: battery.initial_capacity - battery.current_capacity,
     }))
     .filter((battery) => {
       const matchesSearch =
@@ -64,20 +118,20 @@ export default function BatteryHealthPage() {
         battery.laptop.toLowerCase().includes(search.toLowerCase());
 
       const status = getStatus(battery.health);
-      return (
-        matchesSearch && (filter === "All" || status === filter)
-      );
+
+      return matchesSearch && (filter === "All" || status === filter);
     });
 
   const average =
-    batteries.reduce(
-      (sum, battery) => sum + (battery.current / battery.initial) * 100,
-      0
-    ) / batteries.length;
+    batteries.length > 0
+      ? batteries.reduce((sum, battery) => sum + battery.health_percentage, 0) /
+        batteries.length
+      : 0;
 
   const critical = batteries.filter(
-    (battery) => (battery.current / battery.initial) * 100 < 60
+    (battery) => battery.health_percentage < 60
   ).length;
+
 
   return (
     <main className="min-h-screen bg-[#f5f7fb] p-5 text-slate-800 md:p-10">

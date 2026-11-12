@@ -290,6 +290,7 @@ export default function Home() {
               </div>
             ))}
           </section>
+	 
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7">
             <div className="flex flex-wrap items-start justify-between gap-4">

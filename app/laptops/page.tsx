@@ -25,6 +25,10 @@ export default function LaptopsPage() {
   const [purchaseDate, setPurchaseDate] = useState("");
   const [serialNo, setSerialNo] = useState("");
   const [userId, setUserId] = useState("");
+  const [batteryTypeId, setBatteryTypeId] = useState("1");
+  const [initialCapacity, setInitialCapacity] = useState("50000");
+  const [currentCapacity, setCurrentCapacity] = useState("50000");
+  const [batteryInstallDate, setBatteryInstallDate] = useState("");
 
   async function fetchLaptops() {
     try {
@@ -54,7 +58,9 @@ export default function LaptopsPage() {
           purchaseDate: row.purchase_date
             ? String(row.purchase_date).slice(0, 10)
             : "—",
-          battery: "Not assigned",
+          battery: row.battery_id
+  ? `BAT${String(row.battery_id).padStart(3, "0")}`
+  : "Not assigned",
         })
       );
 
@@ -81,48 +87,62 @@ export default function LaptopsPage() {
       .includes(search.toLowerCase())
   );
 
-  async function addLaptop(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setMessage("");
-    setSaving(true);
+  
 
-    try {
-      const response = await fetch("/api/laptops", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: Number(userId),
-          brand,
-          model: model.trim(),
-          os,
-          purchase_date: purchaseDate,
-          serial_no: serialNo.trim() || null,
-        }),
-      });
+async function addLaptop(event: React.FormEvent<HTMLFormElement>) {
+  event.preventDefault();
+  setMessage("");
+  setSaving(true);
 
-      const result = await response.json();
+  try {
+    const response = await fetch("/api/laptops", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        user_id: Number(userId),
+        brand,
+        model: model.trim(),
+        os,
+        purchase_date: purchaseDate,
+        serial_no: serialNo.trim() || null,
+        type_id: Number(batteryTypeId),
+        initial_capacity: Number(initialCapacity),
+	current_capacity: Number(currentCapacity),
+        battery_install_date: batteryInstallDate,
+      }),
+    });
 
-      if (!response.ok || !result.success) {
-        throw new Error(result.error || "Unable to save laptop.");
-      }
+    const result = await response.json();
 
-      setMessage("Laptop saved successfully to MySQL!");
-      setModel("");
-      setPurchaseDate("");
-      setSerialNo("");
-      setUserId("");
-      setShowForm(false);
-
-      await fetchLaptops();
-    } catch (error) {
-      console.error("Save laptop error:", error);
-      setMessage(
-        error instanceof Error ? error.message : "Unable to save laptop."
-      );
-    } finally {
-      setSaving(false);
+    if (!response.ok || !result.success) {
+      throw new Error(result.error || "Unable to save laptop.");
     }
+
+    setMessage("Laptop and battery registered successfully!");
+    setModel("");
+    setPurchaseDate("");
+    setSerialNo("");
+    setUserId("");
+    setBatteryTypeId("1");
+    setInitialCapacity("50000");
+    setCurrentCapacity("50000");
+    setBatteryInstallDate("");
+    setShowForm(false);
+
+    await fetchLaptops();
+
+  } catch (error) {
+    console.error("Save laptop error:", error);
+    setMessage(
+      error instanceof Error ? error.message : "Unable to save laptop."
+    );
+  } finally {
+    setSaving(false);
   }
+}
+
 
   return (
     <main className="min-h-screen bg-[#f5f7fb] p-5 text-slate-800 md:p-10">
@@ -245,6 +265,54 @@ export default function LaptopsPage() {
               className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
             />
           </label>
+<label className="text-sm font-medium">
+  Battery type
+  <select
+    required
+    value={batteryTypeId}
+    onChange={(event) => setBatteryTypeId(event.target.value)}
+    className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+  >
+    <option value="1">Lithium-ion</option>
+    <option value="2">Lithium-polymer</option>
+  </select>
+</label>
+
+<label className="text-sm font-medium">
+  Initial battery capacity (Wh)
+  <input
+    required
+    type="number"
+    min="1"
+    step="0.01"
+    value={initialCapacity}
+    onChange={(event) => setInitialCapacity(event.target.value)}
+    className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+  />
+</label>
+<label className="text-sm font-medium">
+  Current battery capacity (mWh)
+  <input
+    required
+    type="number"
+    min="1"
+    step="0.01"
+    value={currentCapacity}
+    onChange={(event) => setCurrentCapacity(event.target.value)}
+    className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+  />
+</label>
+
+<label className="text-sm font-medium">
+  Battery installation date
+  <input
+    required
+    type="date"
+    value={batteryInstallDate}
+    onChange={(event) => setBatteryInstallDate(event.target.value)}
+    className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+  />
+</label>
 
           <label className="text-sm font-medium sm:col-span-2">
             Serial number (optional)
