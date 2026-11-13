@@ -1,10 +1,10 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
 
 type Maintenance = {
   id: string;
+  maintenanceId: number;
   battery: string;
   laptop: string;
   date: string;
@@ -15,12 +15,14 @@ type Maintenance = {
   location: string;
   status: "Completed" | "Pending";
 };
+
 type RegisteredLaptop = {
   laptop_id: number;
   brand: string;
   model: string;
   battery_id: number | null;
 };
+
 export default function MaintenancePage() {
   const [records, setRecords] = useState<Maintenance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,20 +39,26 @@ export default function MaintenancePage() {
   const [centre, setCentre] = useState("");
   const [location, setLocation] = useState("");
   const [status, setStatus] = useState<"Completed" | "Pending">("Pending");
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [actionId, setActionId] = useState<number | null>(null);
 
-  useEffect(() => {
-    async function fetchMaintenanceRecords() {
-      try {
-        const response = await fetch("/api/maintenance", {
-          cache: "no-store",
-        });
-        const result = await response.json();
+  async function fetchMaintenanceRecords() {
+    try {
+      setLoadError("");
 
-        if (!response.ok || !result.success) {
-          throw new Error(result.error || "Failed to load maintenance records");
-        }
+      const response = await fetch("/api/maintenance", {
+        cache: "no-store",
+      });
 
-        const mappedRecords: Maintenance[] = result.data.map((row: {
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Failed to load maintenance records.");
+      }
+
+      const mappedRecords: Maintenance[] = result.data.map(
+        (row: {
           maintenance_id: number;
           battery_id: number;
           brand: string;
@@ -61,8 +69,10 @@ export default function MaintenancePage() {
           cost: number | string | null;
           service_center: string | null;
           location_id: number;
+          status: string;
         }) => ({
           id: `MNT${String(row.maintenance_id).padStart(3, "0")}`,
+          maintenanceId: row.maintenance_id,
           battery: `BAT${String(row.battery_id).padStart(3, "0")}`,
           laptop: `${row.brand} ${row.model}`,
           date: String(row.service_date).slice(0, 10),
@@ -71,49 +81,50 @@ export default function MaintenancePage() {
           cost: Number(row.cost ?? 0),
           centre: row.service_center || "Not specified",
           location: `Location ID ${row.location_id}`,
-          status: row.action_taken?.trim() ? "Completed" : "Pending",
-        }));
-
-        setRecords(mappedRecords);
-      } catch (error) {
-        console.error("Failed to fetch maintenance records:", error);
-        setLoadError("Unable to load maintenance records from MySQL.");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchMaintenanceRecords();
-  }, []);
-useEffect(() => {
-  async function fetchLaptops() {
-    try {
-      const response = await fetch("/api/laptops", {
-        cache: "no-store",
-      });
-
-      const result = await response.json();
-
-      if (!response.ok || !result.success) {
-        throw new Error("Unable to load registered laptops.");
-      }
-
-      const registeredLaptops: RegisteredLaptop[] = result.data.filter(
-        (item: RegisteredLaptop) => item.battery_id !== null
+          status: row.status === "Completed" ? "Completed" : "Pending",
+        })
       );
 
-      setLaptops(registeredLaptops);
-
-      if (registeredLaptops.length > 0) {
-        setSelectedLaptopId(String(registeredLaptops[0].laptop_id));
-      }
+      setRecords(mappedRecords);
     } catch (error) {
-      console.error("Failed to fetch laptops:", error);
+      console.error("Failed to fetch maintenance records:", error);
+      setLoadError("Unable to load maintenance records from MySQL.");
+    } finally {
+      setLoading(false);
     }
   }
 
-  fetchLaptops();
-}, []);
+  useEffect(() => {
+    fetchMaintenanceRecords();
+
+    async function fetchLaptops() {
+      try {
+        const response = await fetch("/api/laptops", {
+          cache: "no-store",
+        });
+
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+          throw new Error("Unable to load registered laptops.");
+        }
+
+        const registeredLaptops: RegisteredLaptop[] = result.data.filter(
+          (item: RegisteredLaptop) => item.battery_id !== null
+        );
+
+        setLaptops(registeredLaptops);
+
+        if (registeredLaptops.length > 0) {
+          setSelectedLaptopId(String(registeredLaptops[0].laptop_id));
+        }
+      } catch (error) {
+        console.error("Failed to fetch laptops:", error);
+      }
+    }
+
+    fetchLaptops();
+  }, []);
 
   const filtered = records.filter((record) => {
     const matchesSearch =
@@ -125,140 +136,203 @@ useEffect(() => {
   });
 
   const totalCost = records.reduce((sum, record) => sum + record.cost, 0);
+
   const pendingCount = records.filter(
     (record) => record.status === "Pending"
   ).length;
+function editRecord(record: Maintenance) {
+  setEditingId(record.maintenanceId);
+  setSelectedLaptopId(
+    String(
+      laptops.find((l) => l.battery_id === Number(record.battery.replace("BAT", "")))
+        ?.laptop_id ?? ""
+    )
+  );
+  setDate(record.date);
+  setIssue(record.issue === "Not specified" ? "" : record.issue);
+  setAction(record.action === "Not specified" ? "" : record.action);
+  setCost(String(record.cost));
+  setCentre(record.centre === "Not specified" ? "" : record.centre);
+  setLocation(record.location);
+  setStatus(record.status);
+  setShowForm(true);
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+  async function addRecord(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
 
-async function addRecord(event: React.FormEvent<HTMLFormElement>) {
-  event.preventDefault();
+    const amount = Number(cost);
 
-  const amount = Number(cost);
-  const selectedLaptop = laptops.find(
-  (item) => item.laptop_id === Number(selectedLaptopId)
+    const selectedLaptop = laptops.find(
+      (item) => item.laptop_id === Number(selectedLaptopId)
+    );
+
+    if (!selectedLaptop || selectedLaptop.battery_id === null) {
+      alert("Please select a registered laptop with an assigned battery.");
+      return;
+    }
+
+    if (!Number.isFinite(amount) || amount < 0) {
+      alert("Enter a valid non-negative service cost.");
+      return;
+    }
+
+    if (
+      !date ||
+      !issue.trim() ||
+      !action.trim() ||
+      !centre.trim() ||
+      !location.trim()
+    ) {
+      alert("Please fill in all maintenance fields.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const locationResponse = await fetch("/api/locations", {
+        cache: "no-store",
+      });
+
+      if (!locationResponse.ok) {
+        throw new Error("Unable to retrieve locations.");
+      }
+
+      const locationResult = await locationResponse.json();
+
+      if (!locationResult.success || !Array.isArray(locationResult.data)) {
+        throw new Error("The locations API did not return valid data.");
+      }
+
+      const matchingLocation = locationResult.data.find(
+        (item: { location_id: number; name: string }) =>
+          item.name.trim().toLowerCase() === location.trim().toLowerCase()
+      );
+
+      if (!matchingLocation) {
+        throw new Error(
+          "Location not found in the database. Enter an existing location."
+        );
+      }
+
+     const response = await fetch(
+  editingId
+    ? `/api/maintenance?maintenance_id=${editingId}`
+    : "/api/maintenance",
+  {
+    method: editingId ? "PUT" : "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      battery_id: selectedLaptop.battery_id,
+      service_date: date,
+      issue_description: issue.trim(),
+      action_taken: action.trim(),
+      cost: amount,
+      service_center: centre.trim(),
+      location_id: matchingLocation.location_id,
+      status,
+    }),
+  }
 );
 
-if (!selectedLaptop || selectedLaptop.battery_id === null) {
-  alert("Please select a registered laptop with an assigned battery.");
-  return;
-}
+      const result = await response.json();
 
-const batteryId = selectedLaptop.battery_id;
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Failed to save maintenance record.");
+      }
 
-  if (!Number.isFinite(amount) || amount < 0) {
-    alert("Enter a valid non-negative service cost.");
-    return;
-  }
+      await fetchMaintenanceRecords();
 
-  if (!date || !issue.trim() || !action.trim() || !centre.trim() || !location.trim()) {
-    alert("Please fill in all maintenance fields.");
-    return;
-  }
+      setDate("");
+      setIssue("");
+      setAction("");
+      setCost("0");
+      setCentre("");
+      setLocation("");
+      setStatus("Pending");
+      setEditingId(null);
+      setShowForm(false);
 
-  try {
-    // Find the existing location ID using the maintenance form's location.
-    const locationResponse = await fetch("/api/locations", {
-      cache: "no-store",
-    });
+      alert("Maintenance record saved successfully!");
+    } catch (error) {
+      console.error("Failed to save maintenance record:", error);
 
-    if (!locationResponse.ok) {
-      throw new Error("Unable to retrieve locations.");
-    }
-
-    const locationResult = await locationResponse.json();
-
-    if (!locationResult.success || !Array.isArray(locationResult.data)) {
-      throw new Error("The locations API did not return valid data.");
-    }
-
-    const matchingLocation = locationResult.data.find(
-      (item: { location_id: number; name: string }) =>
-        item.name.trim().toLowerCase() === location.trim().toLowerCase()
-    );
-
-    if (!matchingLocation) {
-      throw new Error(
-        "Location not found in the database. Select or enter an existing location."
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to save maintenance record."
       );
+    } finally {
+      setSaving(false);
     }
-
-    const response = await fetch("/api/maintenance", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        battery_id: batteryId,
-        service_date: date,
-        issue_description: issue.trim(),
-        action_taken: action.trim(),
-        cost: amount,
-        service_center: centre.trim(),
-        location_id: matchingLocation.location_id,
-      }),
-    });
-
-    const result = await response.json();
-
-    if (!response.ok || !result.success) {
-      throw new Error(result.error || "Failed to save maintenance record.");
-    }
-
-    const refreshResponse = await fetch("/api/maintenance", {
-      cache: "no-store",
-    });
-
-    const refreshResult = await refreshResponse.json();
-
-    if (!refreshResponse.ok || !refreshResult.success) {
-      throw new Error("Saved, but failed to refresh maintenance history.");
-    }
-
-    const mappedRecords: Maintenance[] = refreshResult.data.map(
-      (row: {
-        maintenance_id: number;
-        battery_id: number;
-        brand: string;
-        model: string;
-        service_date: string;
-        issue_description: string | null;
-        action_taken: string | null;
-        cost: number | string | null;
-        service_center: string | null;
-        location_id: number;
-      }) => ({
-        id: `MNT${String(row.maintenance_id).padStart(3, "0")}`,
-        battery: `BAT${String(row.battery_id).padStart(3, "0")}`,
-        laptop: `${row.brand} ${row.model}`,
-        date: String(row.service_date).slice(0, 10),
-        issue: row.issue_description || "Not specified",
-        action: row.action_taken || "Not specified",
-        cost: Number(row.cost ?? 0),
-        centre: row.service_center || "Not specified",
-        location: `Location ID ${row.location_id}`,
-        status: row.action_taken?.trim() ? "Completed" : "Pending",
-      })
-    );
-
-    setRecords(mappedRecords);
-    setDate("");
-    setIssue("");
-    setAction("");
-    setCost("0");
-    setCentre("");
-    setLocation("");
-    setShowForm(false);
-
-    alert("Maintenance record saved to MySQL!");
-  } catch (error) {
-    console.error("Failed to save maintenance record:", error);
-
-    alert(
-      error instanceof Error
-        ? error.message
-        : "Unable to save maintenance record."
-    );
   }
-}
+
+  async function markCompleted(record: Maintenance) {
+    if (record.status === "Completed") return;
+
+    if (!window.confirm(`Mark ${record.id} as Completed?`)) return;
+
+    setActionId(record.maintenanceId);
+
+    try {
+      const response = await fetch(
+        `/api/maintenance?maintenance_id=${record.maintenanceId}`,
+        { method: "PATCH" }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Unable to update status.");
+      }
+
+      await fetchMaintenanceRecords();
+      alert(`${record.id} marked as Completed.`);
+    } catch (error) {
+      alert(
+        error instanceof Error ? error.message : "Unable to update status."
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function deleteRecord(record: Maintenance) {
+    if (
+      !window.confirm(
+        `Are you sure you want to permanently delete ${record.id}? This action cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    setActionId(record.maintenanceId);
+
+    try {
+      const response = await fetch(
+        `/api/maintenance?maintenance_id=${record.maintenanceId}`,
+        { method: "DELETE" }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Unable to delete maintenance record.");
+      }
+
+      await fetchMaintenanceRecords();
+      alert(`${record.id} deleted successfully.`);
+    } catch (error) {
+      alert(
+        error instanceof Error ? error.message : "Unable to delete record."
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
 
   return (
     <main className="min-h-screen bg-[#f5f7fb] p-5 text-slate-800 md:p-10">
@@ -276,13 +350,15 @@ const batteryId = selectedLaptop.battery_id;
             Track battery issues, service actions and maintenance expenses.
           </p>
         </div>
-
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="rounded-lg bg-emerald-500 px-5 py-3 font-semibold text-slate-950"
-        >
-          {showForm ? "Cancel" : "+ Add Maintenance"}
-        </button>
+<button
+  onClick={() => {
+    setShowForm(!showForm);
+    setEditingId(null);
+  }}
+  className="rounded-lg bg-emerald-500 px-5 py-3 font-semibold text-slate-950"
+>
+  {showForm ? "Cancel" : "+ Add Maintenance"}
+</button>
       </header>
 
       <section className="mt-7 grid gap-4 sm:grid-cols-3">
@@ -290,10 +366,14 @@ const batteryId = selectedLaptop.battery_id;
           <p className="text-sm text-slate-500">Total records</p>
           <p className="mt-3 text-3xl font-bold">{records.length}</p>
         </div>
+
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
           <p className="text-sm text-slate-500">Pending maintenance</p>
-          <p className="mt-3 text-3xl font-bold text-amber-600">{pendingCount}</p>
+          <p className="mt-3 text-3xl font-bold text-amber-600">
+            {pendingCount}
+          </p>
         </div>
+
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
           <p className="text-sm text-slate-500">Recorded service cost</p>
           <p className="mt-3 text-3xl font-bold">
@@ -307,67 +387,118 @@ const batteryId = selectedLaptop.battery_id;
           onSubmit={addRecord}
           className="mt-7 grid gap-4 rounded-2xl border border-slate-200 bg-white p-6 sm:grid-cols-2"
         >
-          <h2 className="text-lg font-bold sm:col-span-2">New maintenance record</h2>
+          <h2 className="text-lg font-bold sm:col-span-2">
+            {editingId ? "Edit maintenance record" : "New maintenance record"}
+          </h2>
 
           <label className="text-sm font-medium sm:col-span-2">
-  Select Laptop
-  <select
-    required
-    value={selectedLaptopId}
-    onChange={(event) => setSelectedLaptopId(event.target.value)}
-    className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
-  >
-    {laptops.length === 0 && (
-      <option value="">No registered laptops with batteries</option>
-    )}
+            Select Laptop
+            <select
+              required
+              value={selectedLaptopId}
+              onChange={(event) => setSelectedLaptopId(event.target.value)}
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            >
+              {laptops.length === 0 && (
+                <option value="">No registered laptops with batteries</option>
+              )}
 
-    {laptops.map((item) => (
-      <option
-        key={item.laptop_id}
-        value={String(item.laptop_id)}
-      >
-        {item.brand} {item.model}
-      </option>
-    ))}
-  </select>
-</label>
+              {laptops.map((item) => (
+                <option
+                  key={item.laptop_id}
+                  value={String(item.laptop_id)}
+                >
+                  {item.brand} {item.model}
+                </option>
+              ))}
+            </select>
+          </label>
 
+          <label className="text-sm font-medium">
+            Service date
+            <input
+              required
+              type="date"
+              value={date}
+              onChange={(event) => setDate(event.target.value)}
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            />
+          </label>
 
           <label className="text-sm font-medium">
             Service cost (₹)
-            <input required type="number" min="0" value={cost} onChange={(event) => setCost(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-200 p-3" />
+            <input
+              required
+              type="number"
+              min="0"
+              value={cost}
+              onChange={(event) => setCost(event.target.value)}
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            />
           </label>
 
           <label className="text-sm font-medium">
             Issue description
-            <input required value={issue} onChange={(event) => setIssue(event.target.value)} placeholder="Describe the issue" className="mt-2 block w-full rounded-lg border border-slate-200 p-3" />
+            <input
+              required
+              value={issue}
+              onChange={(event) => setIssue(event.target.value)}
+              placeholder="Describe the issue"
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            />
           </label>
 
           <label className="text-sm font-medium">
             Action taken
-            <input required value={action} onChange={(event) => setAction(event.target.value)} placeholder="Describe the service" className="mt-2 block w-full rounded-lg border border-slate-200 p-3" />
+            <input
+              required
+              value={action}
+              onChange={(event) => setAction(event.target.value)}
+              placeholder="Describe the service"
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            />
           </label>
 
           <label className="text-sm font-medium">
             Service centre
-            <input required value={centre} onChange={(event) => setCentre(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-200 p-3" />
+            <input
+              required
+              value={centre}
+              onChange={(event) => setCentre(event.target.value)}
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            />
           </label>
 
           <label className="text-sm font-medium">
             Location
-            <input required value={location} onChange={(event) => setLocation(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-200 p-3" />
+            <input
+              required
+              value={location}
+              onChange={(event) => setLocation(event.target.value)}
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            />
           </label>
 
           <label className="text-sm font-medium sm:col-span-2">
             Status
-            <select value={status} onChange={(event) => setStatus(event.target.value as "Completed" | "Pending")} className="mt-2 block w-full rounded-lg border border-slate-200 p-3">
+            <select
+              value={status}
+              onChange={(event) =>
+                setStatus(event.target.value as "Completed" | "Pending")
+              }
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            >
               <option value="Pending">Pending</option>
               <option value="Completed">Completed</option>
             </select>
           </label>
 
-          <button type="submit" className="rounded-lg bg-[#14243a] px-5 py-3 font-semibold text-white sm:col-span-2">
-            Save Record
+          <button
+            type="submit"
+            disabled={saving || laptops.length === 0}
+            className="rounded-lg bg-[#14243a] px-5 py-3 font-semibold text-white disabled:opacity-50 sm:col-span-2"
+          >
+            {saving ? "Saving..." : editingId ? "Save Changes" : "Save Record"}
           </button>
         </form>
       )}
@@ -376,16 +507,26 @@ const batteryId = selectedLaptop.battery_id;
         <h2 className="text-lg font-bold">Service history</h2>
 
         <div className="mt-5 flex flex-col gap-3 sm:flex-row">
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search ID, battery, issue or service centre..." className="min-w-0 flex-1 rounded-lg border border-slate-200 p-3 text-sm" />
-          <select value={filter} onChange={(event) => setFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
-            <option>All</option>
-            <option>Completed</option>
-            <option>Pending</option>
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search ID, battery, issue or service centre..."
+            className="min-w-0 flex-1 rounded-lg border border-slate-200 p-3 text-sm"
+          />
+
+          <select
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            className="rounded-lg border border-slate-200 bg-white p-3 text-sm"
+          >
+            <option value="All">All</option>
+            <option value="Completed">Completed</option>
+            <option value="Pending">Pending</option>
           </select>
         </div>
 
         <div className="mt-5 overflow-x-auto">
-          <table className="w-full min-w-[900px] text-left text-sm">
+          <table className="w-full min-w-[1150px] text-left text-sm">
             <thead>
               <tr className="border-b bg-slate-50 text-xs uppercase text-slate-500">
                 <th className="p-4">Record ID</th>
@@ -396,28 +537,75 @@ const batteryId = selectedLaptop.battery_id;
                 <th className="p-4">Cost</th>
                 <th className="p-4">Service centre</th>
                 <th className="p-4">Status</th>
+                <th className="p-4">Actions</th>
               </tr>
             </thead>
+
             <tbody>
               {filtered.map((record) => (
                 <tr key={record.id} className="border-b border-slate-100">
                   <td className="p-4 font-semibold">{record.id}</td>
+
                   <td className="p-4">
                     {record.battery}
-                    <p className="mt-1 text-xs text-slate-400">{record.laptop}</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {record.laptop}
+                    </p>
                   </td>
+
                   <td className="p-4">{record.date}</td>
                   <td className="p-4">{record.issue}</td>
                   <td className="p-4">{record.action}</td>
-                  <td className="p-4">₹{record.cost.toLocaleString("en-IN")}</td>
+                  <td className="p-4">
+                    ₹{record.cost.toLocaleString("en-IN")}
+                  </td>
+
                   <td className="p-4">
                     {record.centre}
-                    <p className="mt-1 text-xs text-slate-400">{record.location}</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {record.location}
+                    </p>
                   </td>
+
                   <td className="p-4">
-                    <span className={`rounded-full px-3 py-1 text-xs font-semibold ${record.status === "Completed" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        record.status === "Completed"
+                          ? "bg-emerald-50 text-emerald-700"
+                          : "bg-amber-50 text-amber-700"
+                      }`}
+                    >
                       {record.status}
                     </span>
+                  </td>
+
+                  <td className="p-4">
+                    <div className="flex flex-col gap-2">
+<button
+  onClick={() => editRecord(record)}
+  disabled={actionId === record.maintenanceId}
+  className="whitespace-nowrap rounded-md bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700"
+>
+  Edit
+</button>
+                      {record.status === "Pending" && (
+                        <button
+                          onClick={() => markCompleted(record)}
+                          disabled={actionId === record.maintenanceId}
+                          className="whitespace-nowrap rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          Mark Completed
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => deleteRecord(record)}
+                        disabled={actionId === record.maintenanceId}
+                        className="whitespace-nowrap rounded-md bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -437,7 +625,9 @@ const batteryId = selectedLaptop.battery_id;
           )}
 
           {!loading && !loadError && filtered.length === 0 && (
-            <p className="py-8 text-center text-sm text-slate-500">No matching records.</p>
+            <p className="py-8 text-center text-sm text-slate-500">
+              No matching records.
+            </p>
           )}
         </div>
 

@@ -3,22 +3,31 @@
 import { useEffect, useState } from "react";
 
 type Laptop = {
-  id: string;
+  laptop_id: number;
+  user_id: number;
   brand: string;
   model: string;
   os: string;
-  purchaseDate: string;
-  battery: string;
+  purchase_date: string | null;
+  serial_no: string;
+  battery_id: number | null;
+  type_id: number | null;
+  initial_capacity: number | null;
+  current_capacity: number | null;
+  install_date: string | null;
 };
 
 export default function LaptopsPage() {
   const [laptops, setLaptops] = useState<Laptop[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
   const [brand, setBrand] = useState("Dell");
   const [model, setModel] = useState("");
   const [os, setOs] = useState("Windows 11");
@@ -37,91 +46,49 @@ export default function LaptopsPage() {
       const response = await fetch("/api/laptops", {
         cache: "no-store",
       });
+
       const result = await response.json();
 
       if (!response.ok || !result.success) {
         throw new Error(result.error || "Failed to load laptops.");
       }
 
-      const mappedLaptops: Laptop[] = result.data.map(
-        (row: {
-          laptop_id: number;
-          brand: string;
-          model: string;
-          os: string;
-          purchase_date: string | null;
-        }) => ({
-          id: `LAP${String(row.laptop_id).padStart(3, "0")}`,
-          brand: row.brand,
-          model: row.model,
-          os: row.os,
-          purchaseDate: row.purchase_date
-            ? String(row.purchase_date).slice(0, 10)
-            : "—",
-          battery: row.battery_id
-  ? `BAT${String(row.battery_id).padStart(3, "0")}`
-  : "Not assigned",
-        })
-      );
-
-      setLaptops(mappedLaptops);
+      setLaptops(result.data);
     } catch (error) {
-      console.error("Failed to fetch laptops:", error);
       setLoadError(
-        error instanceof Error
-          ? error.message
-          : "Unable to load laptops from MySQL."
+        error instanceof Error ? error.message : "Unable to load laptops."
       );
     } finally {
       setLoading(false);
     }
   }
 
+  async function fetchUserRole() {
+    try {
+      const response = await fetch("/api/auth/me", {
+        cache: "no-store",
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.user) {
+        setIsAdmin(result.user.role === "admin");
+      }
+    } catch (error) {
+      console.error("Unable to fetch user role:", error);
+    }
+  }
+
   useEffect(() => {
     fetchLaptops();
+    fetchUserRole();
   }, []);
 
-  const filteredLaptops = laptops.filter((laptop) =>
-    `${laptop.id} ${laptop.brand} ${laptop.model}`
-      .toLowerCase()
-      .includes(search.toLowerCase())
-  );
-
-  
-
-async function addLaptop(event: React.FormEvent<HTMLFormElement>) {
-  event.preventDefault();
-  setMessage("");
-  setSaving(true);
-
-  try {
-    const response = await fetch("/api/laptops", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        user_id: Number(userId),
-        brand,
-        model: model.trim(),
-        os,
-        purchase_date: purchaseDate,
-        serial_no: serialNo.trim() || null,
-        type_id: Number(batteryTypeId),
-        initial_capacity: Number(initialCapacity),
-	current_capacity: Number(currentCapacity),
-        battery_install_date: batteryInstallDate,
-      }),
-    });
-
-    const result = await response.json();
-
-    if (!response.ok || !result.success) {
-      throw new Error(result.error || "Unable to save laptop.");
-    }
-
-    setMessage("Laptop and battery registered successfully!");
+  function resetForm() {
+    setEditingId(null);
+    setBrand("Dell");
     setModel("");
+    setOs("Windows 11");
     setPurchaseDate("");
     setSerialNo("");
     setUserId("");
@@ -130,19 +97,135 @@ async function addLaptop(event: React.FormEvent<HTMLFormElement>) {
     setCurrentCapacity("50000");
     setBatteryInstallDate("");
     setShowForm(false);
-
-    await fetchLaptops();
-
-  } catch (error) {
-    console.error("Save laptop error:", error);
-    setMessage(
-      error instanceof Error ? error.message : "Unable to save laptop."
-    );
-  } finally {
-    setSaving(false);
   }
-}
 
+  function startEditing(laptop: Laptop) {
+    setMessage("");
+    setEditingId(laptop.laptop_id);
+    setBrand(laptop.brand);
+    setModel(laptop.model);
+    setOs(laptop.os || "Windows 11");
+    setPurchaseDate(
+      laptop.purchase_date
+        ? String(laptop.purchase_date).slice(0, 10)
+        : ""
+    );
+    setSerialNo(laptop.serial_no || "");
+    setUserId(String(laptop.user_id));
+    setBatteryTypeId(String(laptop.type_id || 1));
+    setInitialCapacity(String(laptop.initial_capacity ?? ""));
+    setCurrentCapacity(String(laptop.current_capacity ?? ""));
+    setBatteryInstallDate(
+      laptop.install_date
+        ? String(laptop.install_date).slice(0, 10)
+        : ""
+    );
+    setShowForm(true);
+
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function saveLaptop(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+
+    if (!editingId && !isAdmin && !userId) {
+      // Normal users do not need to enter a user ID.
+      setUserId("");
+    }
+
+    setSaving(true);
+
+    try {
+      const payload = {
+        ...(editingId ? { laptop_id: editingId } : {}),
+        ...(isAdmin ? { user_id: Number(userId) } : {}),
+        brand,
+        model: model.trim(),
+        os,
+        purchase_date: purchaseDate,
+        serial_no: serialNo.trim(),
+        type_id: Number(batteryTypeId),
+        initial_capacity: Number(initialCapacity),
+        current_capacity: Number(currentCapacity),
+        battery_install_date: batteryInstallDate,
+      };
+
+      const response = await fetch("/api/laptops", {
+        method: editingId ? "PUT" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Unable to save laptop.");
+      }
+
+      setMessage(
+        editingId
+          ? "Laptop and battery updated successfully!"
+          : "Laptop and battery registered successfully!"
+      );
+
+      resetForm();
+      await fetchLaptops();
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Unable to save laptop."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteLaptop(laptop: Laptop) {
+    const confirmed = window.confirm(
+      `PERMANENTLY DELETE LAP${String(laptop.laptop_id).padStart(3, "0")} - ${laptop.brand} ${laptop.model}?\n\nThis will permanently delete:\n• Laptop and battery\n• Charging sessions\n• Maintenance records\n• Failure records\n• Battery health history\n• Diagnostic reports\n\nThis action cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    setMessage("");
+
+    try {
+      const response = await fetch(
+        `/api/laptops?laptop_id=${laptop.laptop_id}`,
+        { method: "DELETE" }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Unable to delete laptop.");
+      }
+
+      setMessage("Laptop and all associated records deleted successfully!");
+
+      if (editingId === laptop.laptop_id) {
+        resetForm();
+      }
+
+      await fetchLaptops();
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Unable to delete laptop."
+      );
+    }
+  }
+
+  const filteredLaptops = laptops.filter((laptop) =>
+    `LAP${String(laptop.laptop_id).padStart(3, "0")} ${laptop.brand} ${laptop.model}`
+      .toLowerCase()
+      .includes(search.toLowerCase())
+  );
+
+  const assignedBatteries = laptops.filter(
+    (laptop) => laptop.battery_id !== null
+  ).length;
 
   return (
     <main className="min-h-screen bg-[#f5f7fb] p-5 text-slate-800 md:p-10">
@@ -166,8 +249,13 @@ async function addLaptop(event: React.FormEvent<HTMLFormElement>) {
 
         <button
           onClick={() => {
-            setMessage("");
-            setShowForm(!showForm);
+            if (showForm) {
+              resetForm();
+            } else {
+              setMessage("");
+              setEditingId(null);
+              setShowForm(true);
+            }
           }}
           className="rounded-lg bg-emerald-500 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-emerald-400"
         >
@@ -189,28 +277,27 @@ async function addLaptop(event: React.FormEvent<HTMLFormElement>) {
 
       {showForm && (
         <form
-          onSubmit={addLaptop}
+          onSubmit={saveLaptop}
           className="mt-7 grid gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:grid-cols-2"
         >
           <h2 className="text-lg font-bold sm:col-span-2">
-            Register a laptop
+            {editingId ? "Edit Laptop" : "Register a Laptop"}
           </h2>
 
-          <label className="text-sm font-medium">
-            User ID
-            <input
-              required
-              type="number"
-              min="1"
-              value={userId}
-              onChange={(event) => setUserId(event.target.value)}
-              placeholder="Enter an existing MySQL user ID"
-              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
-            />
-            <span className="mt-1 block text-xs text-slate-500">
-              Use an existing user_id from your users table.
-            </span>
-          </label>
+          {isAdmin && (
+            <label className="text-sm font-medium">
+              User ID
+              <input
+                required
+                type="number"
+                min="1"
+                value={userId}
+                onChange={(event) => setUserId(event.target.value)}
+                placeholder="Enter existing user ID"
+                className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+              />
+            </label>
+          )}
 
           <label className="text-sm font-medium">
             Brand
@@ -265,72 +352,89 @@ async function addLaptop(event: React.FormEvent<HTMLFormElement>) {
               className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
             />
           </label>
-<label className="text-sm font-medium">
-  Battery type
-  <select
-    required
-    value={batteryTypeId}
-    onChange={(event) => setBatteryTypeId(event.target.value)}
-    className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
-  >
-    <option value="1">Lithium-ion</option>
-    <option value="2">Lithium-polymer</option>
-  </select>
-</label>
 
-<label className="text-sm font-medium">
-  Initial battery capacity (Wh)
-  <input
-    required
-    type="number"
-    min="1"
-    step="0.01"
-    value={initialCapacity}
-    onChange={(event) => setInitialCapacity(event.target.value)}
-    className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
-  />
-</label>
-<label className="text-sm font-medium">
-  Current battery capacity (mWh)
-  <input
-    required
-    type="number"
-    min="1"
-    step="0.01"
-    value={currentCapacity}
-    onChange={(event) => setCurrentCapacity(event.target.value)}
-    className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
-  />
-</label>
+          <label className="text-sm font-medium">
+            Battery type
+            <select
+              required
+              value={batteryTypeId}
+              onChange={(event) => setBatteryTypeId(event.target.value)}
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            >
+              <option value="1">Lithium-ion</option>
+              <option value="2">Lithium-polymer</option>
+            </select>
+          </label>
 
-<label className="text-sm font-medium">
-  Battery installation date
-  <input
-    required
-    type="date"
-    value={batteryInstallDate}
-    onChange={(event) => setBatteryInstallDate(event.target.value)}
-    className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
-  />
-</label>
-
-          <label className="text-sm font-medium sm:col-span-2">
-            Serial number (optional)
+          <label className="text-sm font-medium">
+            Initial battery capacity (mWh)
             <input
-              value={serialNo}
-              onChange={(event) => setSerialNo(event.target.value)}
-              placeholder="Enter the laptop serial number"
+              required
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={initialCapacity}
+              onChange={(event) => setInitialCapacity(event.target.value)}
               className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
             />
           </label>
 
-          <button
-            type="submit"
-            disabled={saving}
-            className="rounded-lg bg-[#14243a] px-5 py-3 font-semibold text-white hover:bg-slate-700 disabled:opacity-60 sm:col-span-2"
-          >
-            {saving ? "Saving..." : "Save Laptop"}
-          </button>
+          <label className="text-sm font-medium">
+            Current battery capacity (mWh)
+            <input
+              required
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={currentCapacity}
+              onChange={(event) => setCurrentCapacity(event.target.value)}
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            />
+          </label>
+
+          <label className="text-sm font-medium">
+            Battery installation date
+            <input
+              required
+              type="date"
+              value={batteryInstallDate}
+              onChange={(event) => setBatteryInstallDate(event.target.value)}
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            />
+          </label>
+
+          <label className="text-sm font-medium sm:col-span-2">
+            Serial number
+            <input
+              required
+              value={serialNo}
+              onChange={(event) => setSerialNo(event.target.value)}
+              placeholder="Enter unique laptop serial number"
+              className="mt-2 block w-full rounded-lg border border-slate-200 p-3"
+            />
+          </label>
+
+          <div className="flex flex-wrap gap-3 sm:col-span-2">
+            <button
+              type="submit"
+              disabled={saving}
+              className="rounded-lg bg-[#14243a] px-5 py-3 font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
+            >
+              {saving
+                ? "Saving..."
+                : editingId
+                  ? "Save Changes"
+                  : "Register Laptop"}
+            </button>
+
+            <button
+              type="button"
+              onClick={resetForm}
+              className="rounded-lg border border-slate-300 px-5 py-3 font-semibold text-slate-600 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+          </div>
         </form>
       )}
 
@@ -349,20 +453,14 @@ async function addLaptop(event: React.FormEvent<HTMLFormElement>) {
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
           <p className="text-sm text-slate-500">Assigned batteries</p>
-          <p className="mt-2 text-3xl font-bold">
-            {
-              laptops.filter(
-                (laptop) => laptop.battery !== "Not assigned"
-              ).length
-            }
-          </p>
+          <p className="mt-2 text-3xl font-bold">{assignedBatteries}</p>
         </div>
       </section>
 
       <section className="mt-7 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7">
-        <h2 className="text-lg font-bold">Laptop inventory</h2>
+        <h2 className="text-lg font-bold">Laptop Inventory</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Search and review registered devices.
+          Search, edit and delete registered devices.
         </p>
 
         <input
@@ -373,7 +471,7 @@ async function addLaptop(event: React.FormEvent<HTMLFormElement>) {
         />
 
         <div className="mt-5 overflow-x-auto">
-          <table className="w-full min-w-[700px] text-left text-sm">
+          <table className="w-full min-w-[950px] text-left text-sm">
             <thead>
               <tr className="border-b bg-slate-50 text-xs uppercase text-slate-500">
                 <th className="p-4">Laptop ID</th>
@@ -382,17 +480,50 @@ async function addLaptop(event: React.FormEvent<HTMLFormElement>) {
                 <th className="p-4">Operating system</th>
                 <th className="p-4">Purchase date</th>
                 <th className="p-4">Battery ID</th>
+                <th className="p-4">Actions</th>
               </tr>
             </thead>
+
             <tbody>
               {filteredLaptops.map((laptop) => (
-                <tr key={laptop.id} className="border-b border-slate-100">
-                  <td className="p-4 font-semibold">{laptop.id}</td>
+                <tr
+                  key={laptop.laptop_id}
+                  className="border-b border-slate-100"
+                >
+                  <td className="p-4 font-semibold">
+                    LAP{String(laptop.laptop_id).padStart(3, "0")}
+                  </td>
                   <td className="p-4">{laptop.brand}</td>
                   <td className="p-4">{laptop.model}</td>
                   <td className="p-4">{laptop.os}</td>
-                  <td className="p-4">{laptop.purchaseDate}</td>
-                  <td className="p-4">{laptop.battery}</td>
+                  <td className="p-4">
+                    {laptop.purchase_date
+                      ? String(laptop.purchase_date).slice(0, 10)
+                      : "—"}
+                  </td>
+                  <td className="p-4">
+                    {laptop.battery_id
+                      ? `BAT${String(laptop.battery_id).padStart(3, "0")}`
+                      : "Not assigned"}
+                  </td>
+
+                  <td className="p-4">
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => startEditing(laptop)}
+                        className="rounded-md border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-50"
+                      >
+                        Edit
+                      </button>
+
+                      <button
+                        onClick={() => deleteLaptop(laptop)}
+                        className="rounded-md border border-red-200 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -412,8 +543,7 @@ async function addLaptop(event: React.FormEvent<HTMLFormElement>) {
         </div>
 
         <p className="mt-4 text-xs text-slate-400">
-          Laptop records are loaded from MySQL. New laptops are saved through
-          the backend API.
+          Laptop and battery records are managed through the BatteryWatch API.
         </p>
       </section>
     </main>

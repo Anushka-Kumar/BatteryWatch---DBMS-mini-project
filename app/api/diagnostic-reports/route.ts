@@ -1,13 +1,158 @@
-
 import { NextRequest, NextResponse } from "next/server";
+import { ObjectId } from "mongodb";
 import { getMongoDb } from "@/lib/mongodb";
 import pool from "@/lib/mysql";
 import { requireAuth } from "@/lib/auth";
 
+async function getReportAccess(reportId: string, user: any) {
+  if (!ObjectId.isValid(reportId)) return null;
+
+  const db = await getMongoDb();
+
+  const report = await db.collection("diagnostic_reports").findOne({
+    _id: new ObjectId(reportId),
+  });
+
+  if (!report) return null;
+
+  const [rows]: any = await pool.query(
+    `SELECT b.battery_id, l.user_id
+     FROM batteries b
+     JOIN laptops l ON b.laptop_id = l.laptop_id
+     WHERE b.battery_id = ?`,
+    [Number(report.battery_id)]
+  );
+
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+
+  if (
+    user.role !== "admin" &&
+    Number(rows[0].user_id) !== Number(user.userId)
+  ) {
+    return null;
+  }
+
+  return { db, report };
+}
+function normalizeDate(value: string): string | null {
+  const input = value.trim();
+
+  let year: number;
+  let month: number;
+  let day: number;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+    [year, month, day] = input.split("-").map(Number);
+  } else if (/^\d{2}-\d{2}-\d{4}$/.test(input)) {
+    [day, month, year] = input.split("-").map(Number);
+  } else {
+    return null;
+  }
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function validateReport(body: any) {
+  const batteryId = Number(body.battery_id);
+  const diagnosis = String(body.diagnosis ?? "").trim();
+  const temperatureStatus = String(body.temperature_status ?? "").trim();
+
+  const rawRiskLevel = String(body.risk_level ?? "").trim();
+  const riskLevel =
+    rawRiskLevel.charAt(0).toUpperCase() +
+    rawRiskLevel.slice(1).toLowerCase();
+
+  const analysisDate = normalizeDate(
+    String(body.analysis_date ?? "")
+  );
+
+  const observations = Array.isArray(body.observations)
+    ? body.observations
+        .map((item: unknown) => String(item).trim())
+        .filter(Boolean)
+    : [];
+
+  const recommendations = Array.isArray(body.recommendations)
+    ? body.recommendations
+        .map((item: unknown) => String(item).trim())
+        .filter(Boolean)
+    : [];
+
+  const errors: string[] = [];
+
+  if (!Number.isInteger(batteryId) || batteryId <= 0)
+    errors.push("Invalid battery_id");
+
+  if (!diagnosis)
+    errors.push("Missing diagnosis");
+
+  if (!temperatureStatus)
+    errors.push("Missing temperature_status");
+
+  if (!analysisDate)
+    errors.push("Invalid analysis_date");
+
+  if (!["Low", "Medium", "High", "Critical"].includes(riskLevel))
+    errors.push("Invalid risk_level");
+
+  if (observations.length === 0)
+    errors.push("Observations are empty");
+
+  if (recommendations.length === 0)
+    errors.push("Recommendations are empty");
+
+  if (errors.length > 0) {
+    console.log("REPORT VALIDATION ERRORS:", errors);
+    console.log("RECEIVED BODY:", body);
+    return null;
+  }
+
+  return {
+    battery_id: batteryId,
+    diagnosis,
+    observations,
+    temperature_status: temperatureStatus,
+    recommendations,
+    analysis_date: analysisDate,
+    risk_level: riskLevel,
+  };
+}
+
+
+async function checkBatteryAccess(batteryId: number, user: any) {
+  let query = `
+    SELECT b.battery_id
+    FROM batteries b
+    JOIN laptops l ON b.laptop_id = l.laptop_id
+    WHERE b.battery_id = ?
+  `;
+
+  const params: number[] = [batteryId];
+
+  if (user.role !== "admin") {
+    query += " AND l.user_id = ?";
+    params.push(user.userId);
+  }
+
+  const [rows]: any = await pool.query(query, params);
+
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 export async function GET() {
   try {
     const auth = await requireAuth();
-    if (auth instanceof NextResponse) return auth;
+    if (auth.error) return auth.error;
 
     const db = await getMongoDb();
 
@@ -54,7 +199,6 @@ export async function GET() {
       }
     }
 
-    // Normal users only receive reports for their own laptops.
     if (auth.user.role !== "admin") {
       documents = documents.filter((doc) => {
         const laptop = laptopMap.get(Number(doc.battery_id));
@@ -82,7 +226,7 @@ export async function GET() {
       data,
     });
   } catch (error) {
-    console.error("Diagnostic reports API error:", error);
+    console.error("Diagnostic reports GET error:", error);
 
     return NextResponse.json(
       { success: false, error: "Unable to fetch diagnostic reports" },
@@ -94,58 +238,36 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth();
-    if (auth instanceof NextResponse) return auth;
+    if (auth.error) return auth.error;
 
-    // Only admins can create diagnostic reports.
     if (auth.user.role !== "admin") {
       return NextResponse.json(
-        {
-          success: false,
-          error: "Only admins can create diagnostic reports.",
-        },
+        { success: false, error: "Only admins can create diagnostic reports." },
         { status: 403 }
       );
     }
 
     const body = await request.json();
 
-    const batteryId = Number(body.battery_id);
-    const diagnosis = String(body.diagnosis || "").trim();
-    const temperatureStatus = String(body.temperature_status || "").trim();
-    const riskLevel = String(body.risk_level || "").trim();
-    const analysisDate = body.analysis_date;
+console.log("EDIT REPORT REQUEST BODY:", body);
 
-    const observations = Array.isArray(body.observations)
-      ? body.observations.map((item: unknown) => String(item).trim()).filter(Boolean)
-      : [];
+const report = validateReport(body);
 
-    const recommendations = Array.isArray(body.recommendations)
-      ? body.recommendations.map((item: unknown) => String(item).trim()).filter(Boolean)
-      : [];
+console.log("VALIDATED REPORT:", report);
 
-    if (
-      !Number.isInteger(batteryId) ||
-      batteryId <= 0 ||
-      !diagnosis ||
-      !temperatureStatus ||
-      !analysisDate ||
-      !Number.isFinite(new Date(analysisDate).getTime()) ||
-      !["Low", "Medium", "High", "Critical"].includes(riskLevel) ||
-      observations.length === 0 ||
-      recommendations.length === 0
-    ) {
+    if (!report) {
       return NextResponse.json(
         { success: false, error: "Please provide all valid diagnostic report details." },
         { status: 400 }
       );
     }
 
-    const [batteryRows]: any = await pool.execute(
+    const [batteryRows]: any = await pool.query(
       "SELECT battery_id FROM batteries WHERE battery_id = ?",
-      [batteryId]
+      [report.battery_id]
     );
 
-    if (batteryRows.length === 0) {
+    if (!Array.isArray(batteryRows) || batteryRows.length === 0) {
       return NextResponse.json(
         { success: false, error: "The selected battery does not exist." },
         { status: 404 }
@@ -153,16 +275,6 @@ export async function POST(request: NextRequest) {
     }
 
     const db = await getMongoDb();
-
-    const report = {
-      battery_id: batteryId,
-      diagnosis,
-      observations,
-      temperature_status: temperatureStatus,
-      recommendations,
-      analysis_date: String(analysisDate),
-      risk_level: riskLevel,
-    };
 
     const result = await db
       .collection("diagnostic_reports")
@@ -178,6 +290,106 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       { success: false, error: "Unable to save diagnostic report." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const auth = await requireAuth();
+    if (auth.error) return auth.error;
+
+    const reportId = request.nextUrl.searchParams.get("id");
+
+    if (!reportId || !ObjectId.isValid(reportId)) {
+      return NextResponse.json(
+        { success: false, error: "Invalid diagnostic report ID." },
+        { status: 400 }
+      );
+    }
+
+    const access = await getReportAccess(reportId, auth.user);
+
+    if (!access) {
+      return NextResponse.json(
+        { success: false, error: "Report not found or access denied." },
+        { status: 404 }
+      );
+    }
+
+    const body = await request.json();
+    const report = validateReport(body);
+
+    if (!report) {
+      return NextResponse.json(
+        { success: false, error: "Please provide all valid diagnostic report details." },
+        { status: 400 }
+      );
+    }
+
+    if (!(await checkBatteryAccess(report.battery_id, auth.user))) {
+      return NextResponse.json(
+        { success: false, error: "You are not authorized to use this battery." },
+        { status: 403 }
+      );
+    }
+
+    await access.db.collection("diagnostic_reports").updateOne(
+      { _id: new ObjectId(reportId) },
+      { $set: report }
+    );
+
+    return NextResponse.json({
+      success: true,
+      message: "Diagnostic report updated successfully.",
+    });
+  } catch (error) {
+    console.error("Update diagnostic report error:", error);
+
+    return NextResponse.json(
+      { success: false, error: "Unable to update diagnostic report." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const auth = await requireAuth();
+    if (auth.error) return auth.error;
+
+    const reportId = request.nextUrl.searchParams.get("id");
+
+    if (!reportId || !ObjectId.isValid(reportId)) {
+      return NextResponse.json(
+        { success: false, error: "Invalid diagnostic report ID." },
+        { status: 400 }
+      );
+    }
+
+    const access = await getReportAccess(reportId, auth.user);
+
+    if (!access) {
+      return NextResponse.json(
+        { success: false, error: "Report not found or access denied." },
+        { status: 404 }
+      );
+    }
+
+    await access.db.collection("diagnostic_reports").deleteOne({
+      _id: new ObjectId(reportId),
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: "Diagnostic report deleted successfully.",
+    });
+  } catch (error) {
+    console.error("Delete diagnostic report error:", error);
+
+    return NextResponse.json(
+      { success: false, error: "Unable to delete diagnostic report." },
       { status: 500 }
     );
   }
