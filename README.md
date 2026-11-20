@@ -234,5 +234,5 @@ Records         Reports
 - Additional battery performance metrics
 
 ## Contributors
-Anisha Nukul Niranjan - PES1UG24CS064
-Anushka P - PES1UG24CS075
+- Anisha Nukul Niranjan - PES1UG24CS064
+- Anushka P - PES1UG24CS075
